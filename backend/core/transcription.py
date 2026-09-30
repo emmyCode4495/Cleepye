@@ -1,6 +1,5 @@
 """
-Local transcription using faster-whisper.
-Produces word-level timestamps essential for good captions and clip boundaries.
+Local transcription using faster-whisper with safe device detection.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ def get_whisper_model() -> WhisperModel:
         compute_type = settings.whisper_compute_type
 
         if device == "auto":
-            # Prefer CUDA only if the installed CTranslate2 actually supports it
             try:
                 import ctranslate2
                 if "cuda" in ctranslate2.get_supported_compute_types("cuda"):
@@ -36,7 +34,6 @@ def get_whisper_model() -> WhisperModel:
             except Exception:
                 device = "cpu"
 
-        # On CPU, int8 is the best default. float16 is mainly for GPU.
         if device == "cpu" and compute_type in ("float16", "int8_float16"):
             compute_type = "int8"
 
@@ -56,16 +53,11 @@ def transcribe(
     audio_or_video_path: str | Path,
     language: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Transcribe a video or audio file.
-    Returns a structured result with segments and word-level timestamps.
-    """
     path = Path(audio_or_video_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
     model = get_whisper_model()
-
     logger.info(f"Transcribing: {path.name}")
     segments_gen, info = model.transcribe(
         str(path),
@@ -77,7 +69,6 @@ def transcribe(
 
     segments = []
     full_text_parts = []
-
     for seg in segments_gen:
         words = []
         if seg.words:
@@ -90,7 +81,6 @@ def transcribe(
                         "probability": round(w.probability, 3),
                     }
                 )
-
         segment = {
             "id": seg.id,
             "start": round(seg.start, 3),
@@ -108,7 +98,6 @@ def transcribe(
         "text": " ".join(full_text_parts),
         "segments": segments,
     }
-
     logger.info(
         f"Transcription complete: {len(segments)} segments, "
         f"language={result['language']}, duration={result['duration']}s"

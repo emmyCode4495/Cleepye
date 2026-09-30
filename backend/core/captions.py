@@ -130,13 +130,17 @@ def generate_ass(
     clip_end: float,
     style_name: str = "viral",
     max_words_per_line: int = 4,
+    font_override: str | None = None,
 ) -> str:
     """
     Generate ASS subtitle content for a specific clip window.
     Words outside [clip_start, clip_end] are ignored.
     Relative timestamps are used (0 = start of the clip).
+    font_override: optional Fontname for custom uploaded fonts.
     """
-    style = STYLES.get(style_name, STYLES["viral"])
+    style = dict(STYLES.get(style_name, STYLES["viral"]))
+    if font_override:
+        style["font"] = font_override
 
     # ASS header
     header = f"""[Script Info]
@@ -221,9 +225,12 @@ def write_ass_file(
     clip_end: float,
     output_path: Path,
     style_name: str = "viral",
+    font_override: str | None = None,
 ) -> Path:
     """Generate and write an ASS file for a clip."""
-    content = generate_ass(segments, clip_start, clip_end, style_name=style_name)
+    content = generate_ass(
+        segments, clip_start, clip_end, style_name=style_name, font_override=font_override
+    )
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(content, encoding="utf-8")

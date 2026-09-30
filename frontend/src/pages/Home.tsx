@@ -1,247 +1,205 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { ArrowRight, ClipboardPaste, FileVideo, Link2, Minus, Plus, ShieldCheck, Upload, X, TerminalSquare, AlertTriangle } from "lucide-react";
-import { useShell } from "../components/Layout";
-import MiningPanel from "../components/MiningPanel";
-import { StyleSelect } from "../components/StyleSelect";
-import { useMine } from "../context/MineContext";
-import { useAsync } from "../hooks/useAsync";
+import { Link } from "react-router-dom";
+import {
+  ArrowRight,
+  Captions,
+  Crop,
+  Download,
+  FileAudio,
+  Lock,
+  Play,
+  ScanSearch,
+  ShieldCheck,
+  Sparkles,
+  Zap,
+} from "lucide-react";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
-import { api } from "../lib/api";
-import { ENGINE_START_HINT } from "../lib/brand";
-import { CAPTION_LOOKS, getLook, mergeStyles } from "../lib/captionStyles";
-import { cn } from "../lib/cn";
-import { detectPlatform, formatBytes, isValidHttpUrl } from "../lib/format";
+import { LogoMark } from "../components/Logo";
 
-type Source = "link" | "file";
+const STEPS = [
+  {
+    icon: Download,
+    title: "Drop a link or file",
+    body: "Paste YouTube or upload MP4/MOV. Processing stays on your machine.",
+  },
+  {
+    icon: FileAudio,
+    title: "Transcribe locally",
+    body: "Whisper builds a word-level transcript — no cloud upload required.",
+  },
+  {
+    icon: ScanSearch,
+    title: "Score viral moments",
+    body: "AI ranks the strongest 25–65 second stretches worth posting.",
+  },
+  {
+    icon: Crop,
+    title: "Reframe to 9:16",
+    body: "Smart crop tracks the subject so clips look native on Shorts & Reels.",
+  },
+  {
+    icon: Captions,
+    title: "Burn animated captions",
+    body: "Word-level styles ready for TikTok, YouTube Shorts, and Instagram.",
+  },
+];
 
-function Step({ n, title, hint, children }: { n: string; title: string; hint?: string; children: ReactNode }) {
-  return (
-    <fieldset className="min-w-0">
-      <legend className="mb-3 flex items-baseline gap-3">
-        <span className="font-mono text-xs text-lime">{n}</span>
-        <span className="font-display text-lg font-semibold tracking-tight">{title}</span>
-        {hint && <span className="text-sm text-dim">{hint}</span>}
-      </legend>
-      {children}
-    </fieldset>
-  );
-}
+const FEATURES = [
+  {
+    icon: Lock,
+    title: "Privacy-first",
+    body: "Video and transcripts stay on your device unless you opt into a cloud AI provider.",
+  },
+  {
+    icon: Zap,
+    title: "Credit-based plans",
+    body: "Simple pricing: 1 credit ≈ 1 minute of source video. Free tier to try, Pro when you scale.",
+  },
+  {
+    icon: Sparkles,
+    title: "Export-ready clips",
+    body: "Vertical 9:16, captions burned in, ranked by viral potential — post in minutes.",
+  },
+];
 
 export default function Home() {
   useDocumentTitle();
-  const { state, start, dismissError } = useMine();
-  const { engine, recheck } = useShell();
-
-  const [source, setSource] = useState<Source>("link");
-  const [url, setUrl] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const [maxClips, setMaxClips] = useState(8);
-  const [styleId, setStyleId] = useState("viral");
-  const [touched, setTouched] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
-
-  const styles = useAsync((s) => api.styles(s).catch(() => null), []);
-  const looks = useMemo(() => mergeStyles(styles.data), [styles.data]);
-  const look = getLook(styleId, looks.find((l) => l.id === styleId)?.name);
-
-  useEffect(() => {
-    if (!looks.some((l) => l.id === styleId)) setStyleId(looks[0]?.id ?? CAPTION_LOOKS[0].id);
-  }, [looks, styleId]);
-
-  const trimmed = url.trim();
-  const urlValid = isValidHttpUrl(trimmed);
-  const platform = urlValid ? detectPlatform(trimmed) : null;
-  const ready = source === "link" ? urlValid : !!file;
-  const urlError = source === "link" && touched && trimmed && !urlValid ? "That doesn't look like a full link — include https://" : "";
-
-  function pickFile(f: File | undefined | null) {
-    if (!f) return;
-    if (!f.type.startsWith("video/") && !/\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name)) {
-      setTouched(true);
-      return;
-    }
-    setFile(f);
-  }
-  function onDrop(e: DragEvent) {
-    e.preventDefault();
-    setDragging(false);
-    pickFile(e.dataTransfer.files?.[0]);
-  }
-  async function paste() {
-    try {
-      const text = (await navigator.clipboard.readText()).trim();
-      if (text) {
-        setUrl(text);
-        setTouched(true);
-      }
-    } catch {
-      /* clipboard permission denied — ignore */
-    }
-  }
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setTouched(true);
-    if (!ready || state.status === "running") return;
-    if (source === "file" && file) start({ kind: "file", file, maxClips, style: styleId });
-    else start({ kind: "url", url: trimmed, maxClips, style: styleId });
-  }
-
-  if (state.status === "running") return <MiningPanel />;
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div>
-        <div className="animate-rise">
-          <p className="eyebrow mb-5 flex items-center gap-2">
-            <ShieldCheck className="h-3.5 w-3.5 text-lime" /> Private by default · runs on your machine
-          </p>
-          <h1 className="font-display text-[clamp(2.6rem,6.2vw,4.75rem)] font-bold leading-[0.98] tracking-[-0.03em]" style={{ fontVariationSettings: '"wdth" 90' }}>
-            Find the <span className="hl">moments</span> worth clipping.
-          </h1>
-          <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">
-            Drop a long video or paste a link. Cleepye transcribes it, ranks the strongest stretches, reframes them to vertical, and burns in animated captions — ready to post.
-          </p>
-        </div>
+    <div className="mx-auto max-w-6xl">
+      {/* Hero */}
+      <section className="relative overflow-hidden pb-16 pt-4 md:pb-24 md:pt-8">
+        <div className="pointer-events-none absolute -right-20 top-0 h-72 w-72 rounded-full bg-lime/10 blur-3xl" />
+        <div className="pointer-events-none absolute -left-16 bottom-0 h-56 w-56 rounded-full bg-lime/5 blur-3xl" />
 
-        {engine === "offline" && (
-          <div className="mt-8 flex flex-col gap-4 rounded-2xl border border-coral/25 bg-coral/[0.06] p-5 sm:flex-row sm:items-center">
-            <TerminalSquare className="h-6 w-6 shrink-0 text-coral" />
-            <div className="min-w-0 flex-1">
-              <p className="font-medium">The local engine isn't running</p>
-              <p className="mt-0.5 text-sm text-muted">
-                In the project root run <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-bone">{ENGINE_START_HINT}</code>, then check again.
-              </p>
-            </div>
-            <button onClick={recheck} className="btn-ghost">Check again</button>
-          </div>
-        )}
-
-        <form onSubmit={submit} className="mt-10 space-y-10 animate-rise [animation-delay:120ms]" noValidate>
-          <Step n="01" title="Source">
-            <div role="tablist" aria-label="Source type" className="mb-4 inline-flex rounded-xl border bg-ink-1 p-1">
-              {([["link", "Paste a link", Link2], ["file", "Upload a file", Upload]] as const).map(([id, label, Icon]) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={source === id}
-                  onClick={() => setSource(id)}
-                  className={cn("flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition", source === id ? "bg-white/[0.09] text-bone" : "text-muted hover:text-bone")}
-                >
-                  <Icon className="h-4 w-4" /> {label}
-                </button>
-              ))}
-            </div>
-
-            {source === "link" ? (
-              <div>
-                <div className="relative">
-                  <Link2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-dim" />
-                  <input
-                    type="url"
-                    inputMode="url"
-                    autoComplete="off"
-                    spellCheck={false}
-                    aria-label="Video URL"
-                    aria-invalid={!!urlError}
-                    placeholder="https://youtube.com/watch?v=…"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    onBlur={() => setTouched(true)}
-                    className={cn("field pl-11 pr-28", urlError && "border-coral/50 focus:border-coral/60 focus:ring-coral/10")}
-                  />
-                  <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                    {platform ? (
-                      <span className="chip border-lime/30 bg-lime/10 text-lime">{platform}</span>
-                    ) : (
-                      <button type="button" onClick={paste} className="btn-ghost px-2.5 py-1.5 text-xs">
-                        <ClipboardPaste className="h-3.5 w-3.5" /> Paste
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {urlError ? (
-                  <p className="mt-2 flex items-center gap-1.5 text-sm text-coral"><AlertTriangle className="h-3.5 w-3.5" />{urlError}</p>
-                ) : (
-                  <p className="mt-2 text-sm text-dim">YouTube, Vimeo, X and most sites yt-dlp supports.</p>
-                )}
-              </div>
-            ) : file ? (
-              <div className="surface flex items-center gap-4 p-4">
-                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-lime/10 text-lime"><FileVideo className="h-6 w-6" /></div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{file.name}</p>
-                  <p className="font-mono text-xs text-dim">{formatBytes(file.size)}</p>
-                </div>
-                <button type="button" onClick={() => { setFile(null); if (fileInput.current) fileInput.current.value = ""; }} className="btn-ghost px-3" aria-label="Remove file">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            ) : (
-              <label
-                onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={onDrop}
-                className={cn(
-                  "group relative flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border border-dashed px-6 py-14 text-center transition",
-                  dragging ? "border-lime bg-lime/[0.07]" : "bg-ink-1 hover:border-white/25 hover:bg-white/[0.03]"
-                )}
-              >
-                <div className="ruler pointer-events-none absolute inset-x-0 bottom-0 h-8 opacity-30" />
-                <div className={cn("mb-4 grid h-14 w-14 place-items-center rounded-2xl border transition", dragging ? "border-lime/40 bg-lime/15 text-lime" : "bg-white/[0.03] text-muted group-hover:text-lime")}>
-                  <Upload className="h-6 w-6" />
-                </div>
-                <p className="font-medium">{dragging ? "Release to add your video" : "Drag a video here, or click to browse"}</p>
-                <p className="mt-1 text-sm text-dim">MP4, MOV, MKV, WebM — stays on this machine</p>
-                <input ref={fileInput} type="file" accept="video/*,.mkv" className="sr-only" onChange={(e) => pickFile(e.target.files?.[0])} />
-              </label>
-            )}
-          </Step>
-
-          <Step n="02" title="Captions" hint="Burned in, word by word">
-            <StyleSelect looks={looks} value={styleId} onChange={setStyleId} />
-          </Step>
-
-          <Step n="03" title="Output" hint="Best clips first">
-            <div className="surface flex flex-wrap items-center justify-between gap-4 p-4 sm:px-5">
-              <div>
-                <label htmlFor="max-clips" className="text-sm font-medium">Maximum clips</label>
-                <p className="text-sm text-dim">Cleepye keeps the top-scoring moments.</p>
-              </div>
-              <div className="flex w-full items-center gap-4 sm:w-auto">
-                <input id="max-clips" type="range" min={1} max={20} value={maxClips} onChange={(e) => setMaxClips(Number(e.target.value))} className="h-1.5 flex-1 cursor-pointer sm:w-48" />
-                <div className="flex items-center rounded-xl border bg-ink-2">
-                  <button type="button" aria-label="Fewer clips" onClick={() => setMaxClips((n) => Math.max(1, n - 1))} className="p-2.5 text-muted hover:text-bone"><Minus className="h-4 w-4" /></button>
-                  <output className="w-8 text-center font-mono text-sm tabular-nums" htmlFor="max-clips">{maxClips}</output>
-                  <button type="button" aria-label="More clips" onClick={() => setMaxClips((n) => Math.min(20, n + 1))} className="p-2.5 text-muted hover:text-bone"><Plus className="h-4 w-4" /></button>
-                </div>
-              </div>
-            </div>
-          </Step>
-
-          {state.status === "error" && (
-            <div role="alert" className="flex items-start gap-3 rounded-2xl border border-coral/30 bg-coral/[0.07] p-4">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-coral" />
-              <div className="min-w-0 flex-1">
-                <p className="font-medium">Mining didn't finish</p>
-                <p className="mt-0.5 break-words text-sm text-muted">{state.message}</p>
-              </div>
-              <button type="button" onClick={dismissError} aria-label="Dismiss error" className="rounded-md p-1 text-dim hover:text-bone"><X className="h-4 w-4" /></button>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <button type="submit" disabled={!ready || engine === "offline"} className="btn-primary px-7 py-4 text-base sm:min-w-56">
-              Start mining <ArrowRight className="h-4 w-4" />
-            </button>
-            <p className="text-sm text-dim">
-              {!ready ? (source === "link" ? "Paste a valid link to continue." : "Add a video to continue.") : `Up to ${maxClips} clips · ${look.name} captions`}
+        <div className="relative grid items-center gap-12 lg:grid-cols-2">
+          <div className="animate-rise">
+            <p className="eyebrow mb-5 flex items-center gap-2 text-lime">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              AI video clipper · runs locally
             </p>
+            <h1
+              className="font-display text-[clamp(2.5rem,6vw,4.25rem)] font-bold leading-[0.98] tracking-[-0.03em]"
+              style={{ fontVariationSettings: '"wdth" 90' }}
+            >
+              Turn long videos into <span className="hl">viral clips</span> in minutes.
+            </h1>
+            <p className="mt-6 max-w-lg text-lg leading-relaxed text-muted">
+              Cleepye finds the strongest moments, reframes them to vertical, and burns in captions —
+              so you can post to TikTok, Shorts, and Reels without living in a timeline editor.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <Link to="/mine" className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-base">
+                Start mining <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link to="/download" className="btn-ghost inline-flex items-center gap-2 border border-white/10 px-6 py-3">
+                Download app
+              </Link>
+            </div>
+            <p className="mt-4 text-xs text-dim">New accounts get 5 free credits · No card required</p>
           </div>
-        </form>
-      </div>
 
+          {/* Product visual / how-it-works preview */}
+          <div className="animate-rise [animation-delay:100ms]">
+            <div className="surface relative overflow-hidden p-2">
+              <div className="relative aspect-video overflow-hidden rounded-xl bg-gradient-to-br from-ink-3 to-black">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                  <div className="grid h-16 w-16 place-items-center rounded-full border border-lime/30 bg-lime/10 text-lime">
+                    <Play className="h-7 w-7 fill-current" />
+                  </div>
+                  <p className="text-sm font-medium text-bone">How Cleepye works</p>
+                  <p className="max-w-xs px-4 text-center text-xs text-dim">
+                    Short product walkthrough — drop your demo MP4 or Loom link here later.
+                  </p>
+                </div>
+                {/* Decorative film strip */}
+                <div className="absolute bottom-0 left-0 right-0 flex gap-1 p-3 opacity-40">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="h-10 flex-1 rounded-md bg-white/10" />
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center justify-between px-3 py-3">
+                <div className="flex items-center gap-2">
+                  <LogoMark className="h-6 w-6" />
+                  <span className="text-sm font-medium">Pipeline preview</span>
+                </div>
+                <span className="font-mono text-[11px] text-dim">5 stages · live progress</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Features */}
+      <section className="border-t py-16 md:py-20">
+        <div className="mb-10 max-w-xl">
+          <p className="eyebrow text-lime">Why Cleepye</p>
+          <h2 className="mt-2 font-display text-3xl font-bold tracking-tight md:text-4xl">
+            Built for creators who ship daily
+          </h2>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          {FEATURES.map(({ icon: Icon, title, body }) => (
+            <div key={title} className="surface p-6">
+              <div className="mb-4 grid h-11 w-11 place-items-center rounded-xl border border-lime/20 bg-lime/10 text-lime">
+                <Icon className="h-5 w-5" />
+              </div>
+              <h3 className="font-display text-lg font-semibold">{title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section id="how-it-works" className="border-t py-16 md:py-20">
+        <div className="mb-10 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div className="max-w-xl">
+            <p className="eyebrow text-lime">How it works</p>
+            <h2 className="mt-2 font-display text-3xl font-bold tracking-tight md:text-4xl">
+              From long-form to post-ready in five stages
+            </h2>
+          </div>
+          <Link to="/mine" className="btn-ghost inline-flex items-center gap-2 self-start border border-white/10">
+            Try it now <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+        <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {STEPS.map(({ icon: Icon, title, body }, i) => (
+            <li key={title} className="surface relative p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="grid h-9 w-9 place-items-center rounded-lg bg-lime/10 text-lime">
+                  <Icon className="h-4 w-4" />
+                </div>
+                <span className="font-mono text-[11px] text-dim">0{i + 1}</span>
+              </div>
+              <p className="text-sm font-semibold">{title}</p>
+              <p className="mt-1.5 text-xs leading-relaxed text-muted">{body}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      {/* CTA */}
+      <section className="border-t py-16 md:py-20">
+        <div className="surface relative overflow-hidden px-6 py-12 text-center md:px-12">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-lime/10 via-transparent to-transparent" />
+          <h2 className="relative font-display text-3xl font-bold tracking-tight md:text-4xl">
+            Ready to clip smarter?
+          </h2>
+          <p className="relative mx-auto mt-3 max-w-md text-muted">
+            Open the miner, drop a video, and get ranked vertical clips with captions.
+          </p>
+          <div className="relative mt-8 flex flex-wrap justify-center gap-3">
+            <Link to="/mine" className="btn-primary inline-flex items-center gap-2 px-6 py-3">
+              New mine <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link to="/pricing" className="btn-ghost border border-white/10 px-6 py-3">
+              View pricing
+            </Link>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

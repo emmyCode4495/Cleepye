@@ -1,6 +1,17 @@
 import type { JobDetail, JobSummary, MineInput, MineResponse } from "./types";
 import { BRAND, ENGINE_START_HINT } from "./brand";
 
+/** Optional bearer token provider (wired from AuthContext). */
+let accessTokenProvider: (() => string | null) | null = null;
+export function setAccessTokenProvider(fn: (() => string | null) | null) {
+  accessTokenProvider = fn;
+}
+function authHeaders(base: Record<string, string> = {}): Record<string, string> {
+  const token = accessTokenProvider?.();
+  if (token) return { ...base, Authorization: `Bearer ${token}` };
+  return base;
+}
+
 export class ApiError extends Error {
   status?: number;
   offline: boolean;
@@ -17,19 +28,17 @@ const OFFLINE_MESSAGE = `Can't reach the ${BRAND} engine. Start it with \`${ENGI
 function detailToMessage(detail: unknown): string | null {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
-    // FastAPI validation errors: [{ loc, msg, type }]
     return detail.map((d) => (typeof d?.msg === "string" ? d.msg : JSON.stringify(d))).join("; ");
   }
   return null;
 }
 
 async function readError(res: Response): Promise<ApiError> {
-  // Vite's dev proxy answers 500/502/504 with an empty body when the engine is down.
   let body: any = null;
   try {
     body = await res.json();
   } catch {
-    /* empty body */
+    /* empty */
   }
   const msg = detailToMessage(body?.detail);
   if (!msg && res.status >= 500) return new ApiError(OFFLINE_MESSAGE, { status: res.status, offline: true });
@@ -39,7 +48,7 @@ async function readError(res: Response): Promise<ApiError> {
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, { signal, headers: { Accept: "application/json" } });
+    res = await fetch(path, { signal, headers: authHeaders({ Accept: "application/json" }) });
   } catch (e) {
     if ((e as Error).name === "AbortError") throw e;
     throw new ApiError(OFFLINE_MESSAGE, { offline: true });
@@ -49,8 +58,47 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 }
 
 export const api = {
-  jobs: async (signal?: AbortSignal) => (await getJson<{ jobs: JobSummary[] }>("/api/jobs?limit=200", signal)).jobs ?? [],
-  job: (id: string, signal?: AbortSignal) => getJson<JobDetail>(`/api/jobs/${encodeURIComponent(id)}`, signal),
+  fonts: async (signal?: AbortSignal) =>
+    (await getJson<{ fonts: Array<{ id: string; name: string; filename: string; size?: number }> }>("/api/fonts", signal)).fonts ?? [],
+  async uploadFont(file: File): Promise<{ id: string; name: string; filename: string }> {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/fonts", {
+      method: "POST",
+      headers: authHeaders(),
+      body: form,
+    });
+    if (!res.ok) throw await readError(res);
+    return res.json();
+  },
+  async deleteFont(id: string): Promise<void> {
+    const res = await fetch(`/api/fonts/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: authHeaders({ Accept: "application/json" }),
+    });
+    if (!res.ok) throw await readError(res);
+  },
+
+  async cancelJob(id: string, signal?: AbortSignal): Promise<{ job_id: string; status: string; message: string }> {
+    let res: Response;
+    try {
+      res = await fetch(`/api/jobs/${encodeURIComponent(id)}/cancel`, {
+        method: "POST",
+        signal,
+        headers: authHeaders({ Accept: "application/json" }),
+      });
+    } catch (e) {
+      if ((e as Error).name === "AbortError") throw e;
+      throw new ApiError(OFFLINE_MESSAGE, { offline: true });
+    }
+    if (!res.ok) throw await readError(res);
+    return res.json();
+  },
+
+  jobs: async (signal?: AbortSignal) =>
+    (await getJson<{ jobs: JobSummary[] }>("/api/jobs?limit=200", signal)).jobs ?? [],
+  job: (id: string, signal?: AbortSignal) =>
+    getJson<JobDetail>(`/api/jobs/${encodeURIComponent(id)}`, signal),
   styles: async (signal?: AbortSignal) =>
     (await getJson<{ styles: Array<{ id: string; name: string }> }>("/api/styles", signal)).styles ?? [],
   async health(timeoutMs = 4000): Promise<boolean> {
@@ -67,32 +115,77 @@ export interface MineHooks {
   signal: AbortSignal;
   onUploadProgress?: (loaded: number, total: number) => void;
   onUploadDone?: () => void;
+  /** Called whenever the engine reports progress (0–100). */
+  onProgress?: (info: { progress: number; stage: string; message: string; status: string }) => void;
+}
+
+async function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(new DOMException("Aborted", "AbortError"));
+      },
+      { once: true }
+    );
+  });
+}
+
+/** Poll job until completed or failed. */
+async function waitForJob(jobId: string, hooks: MineHooks): Promise<MineResponse> {
+  while (true) {
+    if (hooks.signal.aborted) throw new DOMException("Aborted", "AbortError");
+    const job = await api.job(jobId, hooks.signal);
+    const progress = job.progress ?? 0;
+    const stage = job.stage ?? "processing";
+    const message = job.message ?? "Working…";
+    hooks.onProgress?.({ progress, stage, message, status: job.status });
+
+    if (job.status === "completed") {
+      return {
+        job_id: jobId,
+        status: "completed",
+        message: message || `Rendered ${job.clips_rendered} clips`,
+      };
+    }
+    if (job.status === "failed") {
+      throw new ApiError(job.error || message || "Mining failed");
+    }
+    await sleep(1500, hooks.signal);
+  }
 }
 
 /**
- * Starts a mine. The engine answers only when the whole pipeline has finished,
- * so this promise can stay pending for many minutes. For uploads we use XHR to
- * get real byte-level progress; URL jobs use plain fetch.
+ * Starts a mine and polls for live progress until the job completes.
  */
 export function mine(input: MineInput, hooks: MineHooks): Promise<MineResponse> {
   return input.kind === "url" ? mineUrl(input, hooks) : mineUpload(input, hooks);
 }
 
-async function mineUrl(input: Extract<MineInput, { kind: "url" }>, { signal }: MineHooks): Promise<MineResponse> {
+async function mineUrl(input: Extract<MineInput, { kind: "url" }>, hooks: MineHooks): Promise<MineResponse> {
   let res: Response;
   try {
     res = await fetch("/api/process/url", {
       method: "POST",
-      signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: input.url, max_clips: input.maxClips, caption_style: input.style }),
+      signal: hooks.signal,
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        url: input.url,
+        max_clips: input.maxClips,
+        caption_style: input.style,
+        font_id: input.fontId || null,
+      }),
     });
   } catch (e) {
     if ((e as Error).name === "AbortError") throw e;
     throw new ApiError(OFFLINE_MESSAGE, { offline: true });
   }
   if (!res.ok) throw await readError(res);
-  return res.json();
+  const accepted = (await res.json()) as MineResponse;
+  hooks.onUploadDone?.();
+  return waitForJob(accepted.job_id, hooks);
 }
 
 function mineUpload(input: Extract<MineInput, { kind: "file" }>, hooks: MineHooks): Promise<MineResponse> {
@@ -102,37 +195,41 @@ function mineUpload(input: Extract<MineInput, { kind: "file" }>, hooks: MineHook
     form.append("file", input.file);
     form.append("max_clips", String(input.maxClips));
     form.append("caption_style", input.style);
+    if (input.fontId) form.append("font_id", input.fontId);
 
-    const abort = () => xhr.abort();
-    hooks.signal.addEventListener("abort", abort, { once: true });
-    const cleanup = () => hooks.signal.removeEventListener("abort", abort);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) hooks.onUploadProgress?.(e.loaded, e.total);
+    };
+
+    xhr.onload = async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          hooks.onUploadDone?.();
+          const accepted = JSON.parse(xhr.responseText) as MineResponse;
+          const result = await waitForJob(accepted.job_id, hooks);
+          resolve(result);
+        } catch (e) {
+          reject(e);
+        }
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          const msg = detailToMessage(body?.detail) || `Upload failed (${xhr.status})`;
+          reject(new ApiError(msg, { status: xhr.status }));
+        } catch {
+          reject(new ApiError(`Upload failed (${xhr.status})`, { status: xhr.status }));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new ApiError(OFFLINE_MESSAGE, { offline: true }));
+    xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
+
+    hooks.signal.addEventListener("abort", () => xhr.abort(), { once: true });
 
     xhr.open("POST", "/api/process/upload");
-    xhr.responseType = "text";
-    xhr.setRequestHeader("Accept", "application/json");
-    xhr.upload.onprogress = (e) => e.lengthComputable && hooks.onUploadProgress?.(e.loaded, e.total);
-    xhr.upload.onload = () => hooks.onUploadDone?.();
-    xhr.onerror = () => {
-      cleanup();
-      reject(new ApiError(OFFLINE_MESSAGE, { offline: true }));
-    };
-    xhr.onabort = () => {
-      cleanup();
-      reject(new DOMException("Aborted", "AbortError"));
-    };
-    xhr.onload = () => {
-      cleanup();
-      let body: any = null;
-      try {
-        body = JSON.parse(xhr.responseText);
-      } catch {
-        /* non-JSON */
-      }
-      if (xhr.status >= 200 && xhr.status < 300 && body) return resolve(body as MineResponse);
-      const msg = detailToMessage(body?.detail);
-      if (!msg && xhr.status >= 500) return reject(new ApiError(OFFLINE_MESSAGE, { status: xhr.status, offline: true }));
-      reject(new ApiError(msg ?? `Request failed (${xhr.status})`, { status: xhr.status }));
-    };
+    const token = accessTokenProvider?.();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.send(form);
   });
 }

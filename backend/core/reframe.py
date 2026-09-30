@@ -1,7 +1,6 @@
 """
-Smart reframing: 16:9 → 9:16 with face / subject tracking.
-Uses OpenCV (YuNet if available, otherwise Haar cascade) + temporal smoothing.
-Supports per-clip average for more accurate framing.
+Smart reframing: 16:9 → 9:16 with optional face tracking.
+Falls back to a stable upper-center crop when OpenCV face tools are unavailable.
 """
 
 from __future__ import annotations
@@ -10,15 +9,25 @@ import logging
 from pathlib import Path
 from typing import List, Tuple
 
-import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_yunet_available = hasattr(cv2, "FaceDetectorYN")
+try:
+    import cv2
+    _CV2_OK = hasattr(cv2, "CascadeClassifier") and hasattr(cv2, "VideoCapture")
+except Exception:
+    cv2 = None  # type: ignore
+    _CV2_OK = False
+
+_yunet_available = _CV2_OK and hasattr(cv2, "FaceDetectorYN")
 
 
 def _create_detector(frame_width: int = 640, frame_height: int = 480):
+    if not _CV2_OK:
+        logger.warning("OpenCV face tools unavailable — using center crop")
+        return ("none", None)
+
     if _yunet_available:
         try:
             model_path = cv2.data.haarcascades.replace(
@@ -37,13 +46,17 @@ def _create_detector(frame_width: int = 640, frame_height: int = 480):
         except Exception:
             pass
 
-    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    detector = cv2.CascadeClassifier(cascade_path)
-    if detector.empty():
-        logger.warning("Haar cascade failed to load — will use center crop")
+    try:
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        detector = cv2.CascadeClassifier(cascade_path)
+        if detector.empty():
+            logger.warning("Haar cascade failed to load — using center crop")
+            return ("none", None)
+        logger.info("Using OpenCV Haar cascade face detector")
+        return ("haar", detector)
+    except Exception as e:
+        logger.warning(f"Face detector unavailable ({e}) — using center crop")
         return ("none", None)
-    logger.info("Using OpenCV Haar cascade face detector")
-    return ("haar", detector)
 
 
 def detect_faces_in_frame(
@@ -51,30 +64,36 @@ def detect_faces_in_frame(
     detector_type: str,
     detector,
 ) -> List[Tuple[float, float, float, float]]:
+    if detector_type == "none" or detector is None or not _CV2_OK:
+        return []
+
     h, w = frame.shape[:2]
     boxes = []
 
-    if detector_type == "yunet" and detector is not None:
-        detector.setInputSize((w, h))
-        _, faces = detector.detect(frame)
-        if faces is not None:
-            for face in faces:
-                x, y, bw, bh = face[:4]
-                boxes.append(
-                    (
-                        max(0.0, x / w),
-                        max(0.0, y / h),
-                        min(1.0, bw / w),
-                        min(1.0, bh / h),
+    try:
+        if detector_type == "yunet":
+            detector.setInputSize((w, h))
+            _, faces = detector.detect(frame)
+            if faces is not None:
+                for face in faces:
+                    x, y, bw, bh = face[:4]
+                    boxes.append(
+                        (
+                            max(0.0, x / w),
+                            max(0.0, y / h),
+                            min(1.0, bw / w),
+                            min(1.0, bh / h),
+                        )
                     )
-                )
-    elif detector_type == "haar" and detector is not None:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-        )
-        for (x, y, bw, bh) in faces:
-            boxes.append((x / w, y / h, bw / w, bh / h))
+        elif detector_type == "haar":
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = detector.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            )
+            for (x, y, bw, bh) in faces:
+                boxes.append((x / w, y / h, bw / w, bh / h))
+    except Exception as e:
+        logger.debug(f"Face detect failed on frame: {e}")
 
     return boxes
 
@@ -96,52 +115,67 @@ def compute_crop_boxes(
     video_path: str | Path,
     sample_fps: float = 2.0,
 ) -> List[dict]:
+    """
+    Return crop keyframes. Always succeeds — falls back to center crop.
+    """
+    # Default center-ish framing for talking-head content
+    default = [{"time": 0.0, "x_center": 0.5, "y_center": 0.42}]
+
+    if not _CV2_OK:
+        logger.info("OpenCV unavailable — center crop only")
+        return default
+
     path = Path(video_path)
-    cap = cv2.VideoCapture(str(path))
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {path}")
+    try:
+        cap = cv2.VideoCapture(str(path))
+        if not cap.isOpened():
+            logger.warning(f"Cannot open video for face tracking: {path}")
+            return default
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    frame_interval = max(1, int(fps / sample_fps))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        frame_interval = max(1, int(fps / sample_fps))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
 
-    detector_type, detector = _create_detector(width, height)
+        detector_type, detector = _create_detector(width, height)
 
-    centers = []
-    times = []
-    frame_idx = 0
+        centers = []
+        times = []
+        frame_idx = 0
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_idx % frame_interval == 0:
-            t = frame_idx / fps
-            boxes = detect_faces_in_frame(frame, detector_type, detector)
-            if boxes:
-                largest = max(boxes, key=lambda b: b[2] * b[3])
-                x, y, bw, bh = largest
-                cx = x + bw / 2
-                cy = y + bh / 2
-            else:
-                cx, cy = 0.5, 0.42
-            centers.append((cx, cy))
-            times.append(t)
-        frame_idx += 1
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if frame_idx % frame_interval == 0:
+                t = frame_idx / fps
+                boxes = detect_faces_in_frame(frame, detector_type, detector)
+                if boxes:
+                    largest = max(boxes, key=lambda b: b[2] * b[3])
+                    x, y, bw, bh = largest
+                    cx = x + bw / 2
+                    cy = y + bh / 2
+                else:
+                    cx, cy = 0.5, 0.42
+                centers.append((cx, cy))
+                times.append(t)
+            frame_idx += 1
 
-    cap.release()
+        cap.release()
 
-    if not centers:
-        return [{"time": 0.0, "x_center": 0.5, "y_center": 0.42}]
+        if not centers:
+            return default
 
-    smoothed = smooth_centers(centers)
-    result = [
-        {"time": round(t, 3), "x_center": round(cx, 4), "y_center": round(cy, 4)}
-        for t, (cx, cy) in zip(times, smoothed)
-    ]
-    logger.info(f"Computed {len(result)} crop keyframes for {path.name}")
-    return result
+        smoothed = smooth_centers(centers)
+        result = [
+            {"time": round(t, 3), "x_center": round(cx, 4), "y_center": round(cy, 4)}
+            for t, (cx, cy) in zip(times, smoothed)
+        ]
+        logger.info(f"Computed {len(result)} crop keyframes for {path.name}")
+        return result
+    except Exception as e:
+        logger.warning(f"Face tracking failed ({e}) — using center crop")
+        return default
 
 
 def build_ffmpeg_crop_filter(
@@ -153,15 +187,12 @@ def build_ffmpeg_crop_filter(
     clip_start: float = 0.0,
     clip_end: float | None = None,
 ) -> str:
-    """
-    Build crop filter using keyframes that fall inside the clip window.
-    More accurate than a global average.
-    """
     if not crop_data:
         cx, cy = 0.5, 0.42
     else:
         relevant = [
-            d for d in crop_data
+            d
+            for d in crop_data
             if d["time"] >= clip_start and (clip_end is None or d["time"] <= clip_end)
         ]
         if not relevant:

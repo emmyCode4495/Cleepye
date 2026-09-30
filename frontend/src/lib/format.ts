@@ -130,6 +130,37 @@ export function isValidHttpUrl(raw: string): boolean {
   }
 }
 
+
+/** Extract a YouTube video id from common URL shapes, or null. */
+export function youtubeVideoId(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.replace(/^www\./, "");
+    if (host === "youtu.be") {
+      const id = u.pathname.split("/").filter(Boolean)[0];
+      return id || null;
+    }
+    if (host === "youtube.com" || host.endsWith(".youtube.com")) {
+      if (u.searchParams.get("v")) return u.searchParams.get("v");
+      const parts = u.pathname.split("/").filter(Boolean);
+      // /embed/ID, /shorts/ID, /live/ID
+      if (parts.length >= 2 && ["embed", "shorts", "live", "v"].includes(parts[0])) {
+        return parts[1] || null;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Best-effort public thumbnail for a video URL (YouTube only for now). */
+export function linkThumbnailUrl(raw: string): string | null {
+  const id = youtubeVideoId(raw);
+  if (id) return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  return null;
+}
+
 export type ScoreTier = "prime" | "strong" | "fair";
 export function scoreTier(score: number): { tier: ScoreTier; label: string; color: string } {
   if (score >= 80) return { tier: "prime", label: "Prime", color: "rgb(var(--lime))" };

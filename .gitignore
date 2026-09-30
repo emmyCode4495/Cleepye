@@ -88,3 +88,4 @@ yarn-error.log*
 *.bak
 *.tmp
 .ipynb_checkpoints/
+data/fonts/

@@ -16,6 +16,9 @@ export interface JobSummary {
   source_type: string;
   source: string;
   status: string;
+  stage?: string;
+  progress?: number;
+  message?: string;
   duration: number | null;
   candidates_found: number;
   clips_rendered: number;
@@ -29,11 +32,15 @@ export interface JobDetail {
   source: string;
   source_type?: string;
   status: string;
+  stage?: string;
+  progress?: number;
+  message?: string;
   duration: number | null;
   candidates_found: number;
   clips_rendered: number;
   caption_style: string;
   created_at?: string | null;
+  error?: string | null;
   clips: Clip[];
 }
 
@@ -44,5 +51,5 @@ export interface MineResponse {
 }
 
 export type MineInput =
-  | { kind: "url"; url: string; maxClips: number; style: string }
-  | { kind: "file"; file: File; maxClips: number; style: string };
+  | { kind: "url"; url: string; maxClips: number; style: string; fontId?: string | null }
+  | { kind: "file"; file: File; maxClips: number; style: string; fontId?: string | null };
