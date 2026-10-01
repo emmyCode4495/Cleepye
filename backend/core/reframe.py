@@ -13,6 +13,29 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Social / platform output sizes (width x height)
+ASPECT_PRESETS: dict[str, dict] = {
+    "9:16": {"width": 1080, "height": 1920, "label": "9:16 · TikTok / Reels / Shorts"},
+    "16:9": {"width": 1920, "height": 1080, "label": "16:9 · YouTube / landscape"},
+    "1:1": {"width": 1080, "height": 1080, "label": "1:1 · Instagram feed"},
+    "4:5": {"width": 1080, "height": 1350, "label": "4:5 · Instagram portrait"},
+    "4:3": {"width": 1440, "height": 1080, "label": "4:3 · Classic"},
+}
+
+
+def resolve_aspect(aspect: str) -> tuple[int, int]:
+    key = (aspect or "9:16").strip()
+    preset = ASPECT_PRESETS.get(key) or ASPECT_PRESETS["9:16"]
+    return int(preset["width"]), int(preset["height"])
+
+
+def list_aspects() -> list[dict]:
+    return [
+        {"id": k, "label": v["label"], "width": v["width"], "height": v["height"]}
+        for k, v in ASPECT_PRESETS.items()
+    ]
+
+
 try:
     import cv2
     _CV2_OK = hasattr(cv2, "CascadeClassifier") and hasattr(cv2, "VideoCapture")

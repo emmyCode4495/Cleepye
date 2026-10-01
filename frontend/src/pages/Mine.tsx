@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { ArrowRight, ClipboardPaste, Link2, Minus, Plus, ShieldCheck, Upload,  TerminalSquare } from "lucide-react";
+import { ArrowRight, ClipboardPaste, Link2, Minus, Plus, ShieldCheck, Upload, TerminalSquare } from "lucide-react";
 import { useShell } from "../components/Layout";
 import MiningPanel from "../components/MiningPanel";
 import { StyleSelect } from "../components/StyleSelect";
@@ -34,6 +34,7 @@ function Step({ n, title, hint, children }: { n: string; title: string; hint?: s
 export default function Mine() {
   useDocumentTitle("New mine");
   const { state, start } = useMine();
+ 
   const auth = useAuth();
   const maxClipsCap = auth.planLimits?.max_clips_ui ?? (auth.profile?.plan_id === "free" ? 1 : 20);
   const planName = auth.planLimits?.name ?? auth.profile?.plan_id ?? "your plan";
@@ -46,6 +47,10 @@ export default function Mine() {
   const [maxClips, setMaxClips] = useState(1);
   // planLimits applied below after auth
   const [styleId, setStyleId] = useState("viral");
+  const [minClipDuration, setMinClipDuration] = useState(15);
+  const [maxClipDuration, setMaxClipDuration] = useState(60);
+  const [aspectRatio, setAspectRatio] = useState("9:16");
+
   const [fontId, setFontId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,6 +61,8 @@ export default function Mine() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const styles = useAsync((s) => api.styles(s).catch(() => null), []);
+  const aspects = useAsync((s) => api.aspects(s).catch(() => []), []);
+
   const fonts = useAsync((s) => api.fonts(s).catch(() => []), []);
   const looks = useMemo(() => mergeStyles(styles.data), [styles.data]);
   const look = getLook(styleId, looks.find((l) => l.id === styleId)?.name);
@@ -98,8 +105,8 @@ export default function Mine() {
     e.preventDefault();
     setTouched(true);
     if (!ready || state.status === "running") return;
-    if (source === "file" && file) start({ kind: "file", file, maxClips: Math.min(maxClips, maxClipsCap), style: styleId, fontId });
-    else start({ kind: "url", url: trimmed, maxClips: Math.min(maxClips, maxClipsCap), style: styleId, fontId });
+    if (source === "file" && file) start({ kind: "file", file, maxClips: Math.min(maxClips, maxClipsCap), style: styleId, fontId, minClipDuration, maxClipDuration, aspectRatio });
+    else start({ kind: "url", url: trimmed, maxClips: Math.min(maxClips, maxClipsCap), style: styleId, fontId, minClipDuration, maxClipDuration, aspectRatio });
   }
 
   if (state.status === "running") return <MiningPanel />;
@@ -224,6 +231,69 @@ export default function Mine() {
 
           <Step n="02" title="Captions" hint="Burned in, word by word">
             <StyleSelect looks={looks} value={styleId} onChange={setStyleId} />
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" htmlFor="min-dur">Min clip length (sec)</label>
+                <input
+                  id="min-dur"
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={minClipDuration}
+                  onChange={(e) => {
+                    const v = Math.max(5, Number(e.target.value) || 15);
+                    setMinClipDuration(v);
+                    if (maxClipDuration <= v) setMaxClipDuration(v + 5);
+                  }}
+                  className="field"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" htmlFor="max-dur">Max clip length (sec)</label>
+                <input
+                  id="max-dur"
+                  type="number"
+                  min={10}
+                  max={180}
+                  value={maxClipDuration}
+                  onChange={(e) => {
+                    const v = Math.max(minClipDuration + 1, Number(e.target.value) || 60);
+                    setMaxClipDuration(v);
+                  }}
+                  className="field"
+                />
+              </div>
+            </div>
+            <p className="mt-1.5 text-xs text-dim">Clips will be scored only inside this length range.</p>
+
+            <div className="mt-6">
+              <p className="mb-2 text-sm font-medium">Output format</p>
+              <div className="flex flex-wrap gap-2">
+                {(aspects.data?.length
+                  ? aspects.data
+                  : [
+                      { id: "9:16", label: "9:16 · TikTok / Reels / Shorts" },
+                      { id: "16:9", label: "16:9 · YouTube" },
+                      { id: "1:1", label: "1:1 · Feed" },
+                      { id: "4:5", label: "4:5 · Portrait" },
+                    ]
+                ).map((a: { id: string; label: string }) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setAspectRatio(a.id)}
+                    className={cn(
+                      "chip text-xs",
+                      aspectRatio === a.id ? "border-lime/40 bg-lime/10 text-lime" : "hover:border-white/20"
+                    )}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+
             <div className="mt-5">
               <p className="mb-2 text-sm font-medium">Custom font</p>
               <FontUpload

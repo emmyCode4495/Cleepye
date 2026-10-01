@@ -18,6 +18,7 @@ from backend.config import get_settings
 from backend.core.pipeline import process_video
 from backend.core.captions import list_styles
 from backend.core.fonts import list_fonts, save_font, delete_font
+from backend.core.reframe import list_aspects
 from backend.models.database import init_db, list_jobs, get_job, cancel_job
 from backend.services.auth import AuthUser, optional_user, require_user
 from backend.services.pricing import plans_public, CREDIT_PACKS, credits_for_duration_seconds, credits_for_job, max_clips_for_plan
@@ -71,6 +72,9 @@ class UrlRequest(BaseModel):
     max_clips: int = Field(default=8, ge=1, le=20)
     caption_style: str = "viral"
     font_id: str | None = None
+    min_clip_duration: float = Field(default=15, ge=5, le=120)
+    max_clip_duration: float = Field(default=60, ge=10, le=180)
+    aspect_ratio: str = "9:16"
 
 
 class JobAccepted(BaseModel):
@@ -88,6 +92,9 @@ async def _run_job(
     caption_style: str,
     user_id: str | None,
     font_id: str | None = None,
+    min_clip_duration: float = 15,
+    max_clip_duration: float = 60,
+    aspect_ratio: str = "9:16",
 ) -> None:
     try:
         await process_video(
@@ -98,6 +105,9 @@ async def _run_job(
             job_id=job_id,
             user_id=user_id,
             font_id=font_id,
+            min_clip_duration=min_clip_duration,
+            max_clip_duration=max_clip_duration,
+            aspect_ratio=aspect_ratio,
         )
     except Exception:
         logger.exception(f"Background job {job_id} failed")
@@ -122,6 +132,11 @@ async def health():
 @app.get("/api/styles")
 async def get_styles():
     return {"styles": list_styles()}
+
+
+@app.get("/api/aspects")
+async def get_aspects():
+    return {"aspects": list_aspects()}
 
 
 @app.get("/api/plans")
@@ -206,6 +221,9 @@ async def process_from_url(
         caption_style=req.caption_style,
         user_id=None if user.id == "local" else user.id,
         font_id=req.font_id,
+        min_clip_duration=req.min_clip_duration,
+        max_clip_duration=req.max_clip_duration,
+        aspect_ratio=req.aspect_ratio,
     )
     return JobAccepted(
         job_id=job_id,
@@ -221,6 +239,9 @@ async def process_from_upload(
     max_clips: int = Form(8),
     caption_style: str = Form("viral"),
     font_id: str | None = Form(None),
+    min_clip_duration: float = Form(15),
+    max_clip_duration: float = Form(60),
+    aspect_ratio: str = Form("9:16"),
     user: AuthUser = Depends(require_user),
 ):
     settings = get_settings()
@@ -257,6 +278,9 @@ async def process_from_upload(
         caption_style=caption_style,
         user_id=None if user.id == "local" else user.id,
         font_id=font_id,
+        min_clip_duration=min_clip_duration,
+        max_clip_duration=max_clip_duration,
+        aspect_ratio=aspect_ratio,
     )
     return JobAccepted(
         job_id=job_id,

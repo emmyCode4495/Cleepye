@@ -51,5 +51,23 @@ export interface MineResponse {
 }
 
 export type MineInput =
-  | { kind: "url"; url: string; maxClips: number; style: string; fontId?: string | null }
-  | { kind: "file"; file: File; maxClips: number; style: string; fontId?: string | null };
+  | {
+      kind: "url";
+      url: string;
+      maxClips: number;
+      style: string;
+      fontId?: string | null;
+      minClipDuration?: number;
+      maxClipDuration?: number;
+      aspectRatio?: string;
+    }
+  | {
+      kind: "file";
+      file: File;
+      maxClips: number;
+      style: string;
+      fontId?: string | null;
+      minClipDuration?: number;
+      maxClipDuration?: number;
+      aspectRatio?: string;
+    };

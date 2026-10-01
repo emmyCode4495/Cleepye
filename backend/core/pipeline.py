@@ -16,7 +16,7 @@ import yt_dlp
 from backend.config import get_settings
 from backend.core.transcription import transcribe
 from backend.core.scoring import score_moments
-from backend.core.reframe import compute_crop_boxes, build_ffmpeg_crop_filter
+from backend.core.reframe import compute_crop_boxes, build_ffmpeg_crop_filter, resolve_aspect
 from backend.core.captions import write_ass_file
 from backend.models.database import (
     create_job,
@@ -126,6 +126,9 @@ async def process_video(
     job_id: str | None = None,
     user_id: str | None = None,
     font_id: str | None = None,
+    min_clip_duration: float = 15,
+    max_clip_duration: float = 60,
+    aspect_ratio: str = "9:16",
 ) -> dict[str, Any]:
     settings = get_settings()
     job_id = job_id or str(uuid.uuid4())[:8]
@@ -193,9 +196,14 @@ async def process_video(
         # 3. Score
         _ensure_not_cancelled(job_id)
         _progress(job_id, "score", 50, "Finding viral moments…")
+        min_d = max(5.0, float(min_clip_duration))
+        max_d = max(min_d + 1.0, float(max_clip_duration))
         candidates = await score_moments(
             transcript["text"],
             segments=transcript.get("segments"),
+            min_duration=min_d,
+            max_duration=max_d,
+            limit=max(max_clips * 2, max_clips),
         )
         selected = candidates[:max_clips]
         _progress(job_id, "score", 58, f"Found {len(candidates)} candidates, rendering top {len(selected)}")
@@ -223,10 +231,13 @@ async def process_video(
             ass_path = captions_dir / f"clip_{i:02d}.ass"
 
             try:
+                out_w, out_h = resolve_aspect(aspect_ratio)
                 crop_filter = build_ffmpeg_crop_filter(
                     crop_data,
                     input_width=info["width"],
                     input_height=info["height"],
+                    output_width=out_w,
+                    output_height=out_h,
                     clip_start=cand["start"],
                     clip_end=cand["end"],
                 )

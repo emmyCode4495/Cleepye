@@ -81,6 +81,9 @@ export const api = {
       } | null;
     }>("/api/me", signal),
 
+  aspects: async (signal?: AbortSignal) =>
+    (await getJson<{ aspects: Array<{ id: string; label: string; width: number; height: number }> }>("/api/aspects", signal)).aspects ?? [],
+
   plans: async (signal?: AbortSignal) =>
     getJson<{
       plans: Array<Record<string, unknown>>;
@@ -207,6 +210,9 @@ async function mineUrl(input: Extract<MineInput, { kind: "url" }>, hooks: MineHo
         max_clips: input.maxClips,
         caption_style: input.style,
         font_id: input.fontId || null,
+        min_clip_duration: input.minClipDuration ?? 15,
+        max_clip_duration: input.maxClipDuration ?? 60,
+        aspect_ratio: input.aspectRatio ?? "9:16",
       }),
     });
   } catch (e) {
@@ -227,6 +233,9 @@ function mineUpload(input: Extract<MineInput, { kind: "file" }>, hooks: MineHook
     form.append("max_clips", String(input.maxClips));
     form.append("caption_style", input.style);
     if (input.fontId) form.append("font_id", input.fontId);
+    form.append("min_clip_duration", String(input.minClipDuration ?? 15));
+    form.append("max_clip_duration", String(input.maxClipDuration ?? 60));
+    form.append("aspect_ratio", input.aspectRatio ?? "9:16");
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) hooks.onUploadProgress?.(e.loaded, e.total);
