@@ -26,8 +26,8 @@ export default function Auth() {
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <Logo className="justify-center" />
         <p className="mt-6 text-muted">
-          Auth isn’t configured. Add <code className="text-bone">V_SUPABASE_URL</code> and{" "}
-          <code className="text-bone">V_SUPABASE_ANON_KEY</code> to the frontend env, and run{" "}
+          Auth isn’t configured. Add <code className="text-bone">VITE_SUPABASE_URL</code> and{" "}
+          <code className="text-bone">VITE_SUPABASE_ANON_KEY</code> to the frontend env, and run{" "}
           <code className="text-bone">supabase/schema.sql</code> in your project.
         </p>
         <Link to="/" className="btn-primary mt-6 inline-flex">
