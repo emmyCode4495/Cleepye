@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Check, Loader2, Sparkles } from "lucide-react";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { useAuth } from "../context/AuthContext";
@@ -30,10 +30,34 @@ export default function Pricing() {
   const auth = useAuth();
   const notice = useNotice();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [rule, setRule] = useState("");
   const [loading, setLoading] = useState(true);
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
+
+  useEffect(() => {
+    const tx = params.get("tx_ref") || params.get("transaction_id");
+    const paid = params.get("paid");
+    if (paid && tx && auth.accessToken) {
+      fetch(apiUrl(`/api/billing/confirm?tx_ref=${encodeURIComponent(tx)}`), {
+        headers: { Authorization: `Bearer ${auth.accessToken}`, Accept: "application/json" },
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.ok !== false && !d.detail) {
+            notice.success(
+              d.already ? "Already activated" : "Payment received",
+              d.already
+                ? "Your plan was already updated."
+                : `Plan updated. ${d.credits_granted ?? ""} credits added.`
+            );
+            void auth.refreshProfile();
+          }
+        })
+        .catch(() => {});
+    }
+  }, [params, auth.accessToken]);
 
   useEffect(() => {
     api

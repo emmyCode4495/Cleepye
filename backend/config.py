@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     # Payments (NGN) — order: Flutterwave → Paystack → Korapay
     flutterwave_secret_key: str = ""
     flutterwave_public_key: str = ""
+    flutterwave_secret_hash: str = ""  # Webhook verif-hash from Flutterwave dashboard
     paystack_secret_key: str = ""
     paystack_public_key: str = ""
     korapay_secret_key: str = ""

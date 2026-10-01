@@ -146,3 +146,80 @@ async def grant_credits(
         },
     )
     return new_balance
+
+
+async def activate_subscription(
+    user_id: str,
+    *,
+    plan_id: str,
+    tx_ref: str,
+    provider: str = "flutterwave",
+    amount_ngn: int | None = None,
+) -> dict[str, Any]:
+    """
+    Idempotent: set plan + grant monthly credits once per tx_ref.
+    """
+    from backend.services.pricing import get_plan
+
+    plan = get_plan(plan_id)
+    # Already processed this payment?
+    existing = await sb.rest_select(
+        "credit_ledger",
+        query=f"user_id=eq.{user_id}&reason=eq.subscription_grant&select=id,metadata&order=created_at.desc&limit=20",
+    )
+    if existing:
+        for row in existing:
+            meta = row.get("metadata") or {}
+            if isinstance(meta, str):
+                continue
+            if meta.get("tx_ref") == tx_ref:
+                profile = await get_profile(user_id)
+                return {
+                    "already": True,
+                    "plan_id": plan_id,
+                    "credits_balance": int((profile or {}).get("credits_balance") or 0),
+                }
+
+    profile = await get_profile(user_id)
+    if not profile:
+        raise PermissionError("Profile not found")
+
+    balance = int(profile.get("credits_balance") or 0)
+    # Grant full monthly allowance (stack on remaining trial credits)
+    new_balance = balance + plan.credits_per_month
+
+    await sb.rest_patch(
+        "profiles",
+        query=f"id=eq.{user_id}",
+        body={
+            "plan_id": plan.id,
+            "credits_balance": new_balance,
+            "credits_monthly_allowance": plan.credits_per_month,
+            "subscription_status": "active",
+        },
+    )
+    await sb.rest_insert(
+        "credit_ledger",
+        {
+            "user_id": user_id,
+            "delta": plan.credits_per_month,
+            "reason": "subscription_grant",
+            "metadata": {
+                "tx_ref": tx_ref,
+                "provider": provider,
+                "plan_id": plan.id,
+                "amount_ngn": amount_ngn,
+                "credits_granted": plan.credits_per_month,
+            },
+        },
+    )
+    logger.info(
+        f"Subscription activated user={user_id} plan={plan.id} "
+        f"+{plan.credits_per_month} credits tx={tx_ref}"
+    )
+    return {
+        "already": False,
+        "plan_id": plan.id,
+        "credits_granted": plan.credits_per_month,
+        "credits_balance": new_balance,
+    }

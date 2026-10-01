@@ -206,3 +206,34 @@ async def initiate_subscription_payment(
     raise PaymentError(
         "All payment providers failed. " + " | ".join(errors)
     )
+
+
+async def verify_flutterwave_tx(tx_ref: str) -> dict[str, Any]:
+    """Confirm a transaction with Flutterwave (source of truth)."""
+    s = get_settings()
+    if not s.flutterwave_secret_key:
+        raise PaymentError("Flutterwave not configured", "flutterwave")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            "https://api.flutterwave.com/v3/transactions/verify_by_reference",
+            params={"tx_ref": tx_ref},
+            headers={"Authorization": f"Bearer {s.flutterwave_secret_key}"},
+        )
+        data = resp.json()
+        if resp.status_code >= 400 or data.get("status") != "success":
+            raise PaymentError(data.get("message") or "Verify failed", "flutterwave")
+        return data.get("data") or {}
+
+
+def flutterwave_hash_ok(verif_hash: str | None) -> bool:
+    """Compare webhook verif-hash header to secret hash from dashboard."""
+    s = get_settings()
+    expected = (s.flutterwave_secret_hash or "").strip()
+    if not expected:
+        # If hash not set, allow but log — set FLUTTERWAVE_SECRET_HASH in production
+        logger.warning("FLUTTERWAVE_SECRET_HASH not set; webhook signature not verified")
+        return True
+    if not verif_hash:
+        return False
+    import hmac
+    return hmac.compare_digest(verif_hash.strip(), expected)

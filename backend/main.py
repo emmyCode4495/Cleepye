@@ -9,7 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -21,7 +21,13 @@ from backend.core.fonts import list_fonts, save_font, delete_font
 from backend.models.database import init_db, list_jobs, get_job, cancel_job
 from backend.services.auth import AuthUser, optional_user, require_user
 from backend.services.pricing import plans_public, CREDIT_PACKS, credits_for_duration_seconds, credits_for_job, max_clips_for_plan
-from backend.services.payments import initiate_subscription_payment, PaymentError
+from backend.services.payments import (
+    initiate_subscription_payment,
+    PaymentError,
+    verify_flutterwave_tx,
+    flutterwave_hash_ok,
+)
+from backend.services.credits import activate_subscription
 from backend.services.credits import get_profile, InsufficientCredits, PlanLimitExceeded
 from backend.services.supabase_client import supabase_enabled
 
@@ -363,6 +369,125 @@ async def api_subscribe(req: SubscribeRequest, user: AuthUser = Depends(require_
         return result
     except PaymentError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+
+
+@app.post("/api/billing/webhook/flutterwave")
+async def flutterwave_webhook(request: Request):
+    """
+    Flutterwave sends charge events here.
+    Dashboard → Settings → Webhooks → URL:
+      https://YOUR_API/api/billing/webhook/flutterwave
+    Secret hash → FLUTTERWAVE_SECRET_HASH env.
+    """
+    verif = request.headers.get("verif-hash") or request.headers.get("Verif-Hash")
+    if not flutterwave_hash_ok(verif):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    body = await request.json()
+    event = (body.get("event") or body.get("type") or "").lower()
+    data = body.get("data") or {}
+    status = (data.get("status") or "").lower()
+
+    # Accept successful charges
+    if status not in ("successful", "success") and "success" not in event:
+        return {"ok": True, "ignored": True, "reason": f"status={status} event={event}"}
+
+    tx_ref = data.get("tx_ref") or data.get("txRef") or ""
+    if not tx_ref:
+        raise HTTPException(status_code=400, detail="Missing tx_ref")
+
+    # Prefer live verify
+    try:
+        verified = await verify_flutterwave_tx(tx_ref)
+    except PaymentError as e:
+        logger.warning(f"Flutterwave verify failed for {tx_ref}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    v_status = (verified.get("status") or "").lower()
+    if v_status not in ("successful", "success"):
+        return {"ok": True, "ignored": True, "reason": f"verify status={v_status}"}
+
+    meta = verified.get("meta") or data.get("meta") or {}
+    if isinstance(meta, str):
+        import json as _json
+        try:
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+
+    user_id = meta.get("user_id") or meta.get("userId")
+    plan_id = meta.get("plan_id") or meta.get("planId")
+    if not user_id or not plan_id:
+        # Fallback: parse tx_ref cleepye_{plan}_{user8}_{rand}
+        parts = tx_ref.split("_")
+        if len(parts) >= 3 and parts[0] == "cleepye":
+            plan_id = plan_id or parts[1]
+        logger.error(f"Webhook missing meta user/plan tx_ref={tx_ref} meta={meta}")
+        raise HTTPException(status_code=400, detail="Missing user_id or plan_id in payment meta")
+
+    amount = verified.get("amount")
+    try:
+        amount_i = int(float(amount)) if amount is not None else None
+    except (TypeError, ValueError):
+        amount_i = None
+
+    try:
+        result = await activate_subscription(
+            str(user_id),
+            plan_id=str(plan_id),
+            tx_ref=tx_ref,
+            provider="flutterwave",
+            amount_ngn=amount_i,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception:
+        logger.exception("activate_subscription failed")
+        raise HTTPException(status_code=500, detail="Could not grant credits")
+
+    return {"ok": True, **result}
+
+
+@app.get("/api/billing/confirm")
+async def billing_confirm(tx_ref: str, user: AuthUser = Depends(require_user)):
+    """
+    Optional: after redirect from Flutterwave (?tx_ref=...), frontend can call this
+    to confirm and grant credits if webhook was delayed.
+    """
+    if user.id == "local":
+        raise HTTPException(status_code=401, detail="Sign in required")
+    try:
+        verified = await verify_flutterwave_tx(tx_ref)
+    except PaymentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if (verified.get("status") or "").lower() not in ("successful", "success"):
+        raise HTTPException(status_code=400, detail="Payment not successful yet")
+    meta = verified.get("meta") or {}
+    if isinstance(meta, str):
+        import json as _json
+        try:
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+    plan_id = meta.get("plan_id") or "starter"
+    user_id = meta.get("user_id") or user.id
+    if str(user_id) != str(user.id):
+        raise HTTPException(status_code=403, detail="Payment does not belong to this user")
+    amount = verified.get("amount")
+    try:
+        amount_i = int(float(amount)) if amount is not None else None
+    except (TypeError, ValueError):
+        amount_i = None
+    result = await activate_subscription(
+        user.id,
+        plan_id=str(plan_id),
+        tx_ref=tx_ref,
+        provider="flutterwave",
+        amount_ngn=amount_i,
+    )
+    return result
 
 
 if __name__ == "__main__":
