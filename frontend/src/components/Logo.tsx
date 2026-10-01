@@ -1,4 +1,3 @@
-import { BRAND } from "../lib/brand";
 import { cn } from "../lib/cn";
 
 /** Brand mark — official Cleepye logo asset (no play-button SVG). */

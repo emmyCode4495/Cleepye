@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { ArrowRight, ClipboardPaste, FileVideo, Link2, Minus, Plus, ShieldCheck, Upload, X, TerminalSquare, AlertTriangle } from "lucide-react";
+import { ArrowRight, ClipboardPaste,  Link2, Minus, Plus, ShieldCheck, Upload,  TerminalSquare } from "lucide-react";
 import { useShell } from "../components/Layout";
 import MiningPanel from "../components/MiningPanel";
 import { StyleSelect } from "../components/StyleSelect";
 import { FontUpload } from "../components/FontUpload";
 import { SourcePreview } from "../components/SourcePreview";
 import { useMine } from "../context/MineContext";
-import { useNotice } from "../context/NoticeContext";
 import { useAsync } from "../hooks/useAsync";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { api } from "../lib/api";
 import { ENGINE_START_HINT } from "../lib/brand";
 import { CAPTION_LOOKS, getLook, mergeStyles } from "../lib/captionStyles";
 import { cn } from "../lib/cn";
-import { detectPlatform, formatBytes, isValidHttpUrl } from "../lib/format";
+import { detectPlatform, isValidHttpUrl } from "../lib/format";
 
 type Source = "link" | "file";
 
@@ -33,7 +32,7 @@ function Step({ n, title, hint, children }: { n: string; title: string; hint?: s
 export default function Mine() {
   useDocumentTitle("New mine");
   const { state, start } = useMine();
-  const notice = useNotice();
+ 
   const { engine, recheck } = useShell();
 
   const [source, setSource] = useState<Source>("link");

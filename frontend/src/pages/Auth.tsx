@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { useNotice } from "../context/NoticeContext";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { Logo } from "../components/Logo";
-import { cn } from "../lib/cn";
+
 
 type Mode = "signin" | "signup";
 
