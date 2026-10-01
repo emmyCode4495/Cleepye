@@ -11,9 +11,9 @@ class Settings(BaseSettings):
     )
 
     # Server
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 8741
-    debug: bool = True
+    debug: bool = False
 
     # Security
     secret_key: str = ""
