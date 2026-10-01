@@ -1,6 +1,13 @@
 import type { JobDetail, JobSummary, MineInput, MineResponse } from "./types";
 import { BRAND, ENGINE_START_HINT } from "./brand";
 
+/** Hosted API origin when frontend is on Vercel (no trailing slash). Empty = same origin. */
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") || "";
+function apiUrl(path: string): string {
+  if (path.startsWith("http")) return path;
+  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 /** Optional bearer token provider (wired from AuthContext). */
 let accessTokenProvider: (() => string | null) | null = null;
 export function setAccessTokenProvider(fn: (() => string | null) | null) {
@@ -48,7 +55,7 @@ async function readError(res: Response): Promise<ApiError> {
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, { signal, headers: authHeaders({ Accept: "application/json" }) });
+    res = await fetch(apiUrl(path), { signal, headers: authHeaders({ Accept: "application/json" }) });
   } catch (e) {
     if ((e as Error).name === "AbortError") throw e;
     throw new ApiError(OFFLINE_MESSAGE, { offline: true });
@@ -63,7 +70,7 @@ export const api = {
   async uploadFont(file: File): Promise<{ id: string; name: string; filename: string }> {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch("/api/fonts", {
+    const res = await fetch(apiUrl("/api/fonts"), {
       method: "POST",
       headers: authHeaders(),
       body: form,
@@ -72,7 +79,7 @@ export const api = {
     return res.json();
   },
   async deleteFont(id: string): Promise<void> {
-    const res = await fetch(`/api/fonts/${encodeURIComponent(id)}`, {
+    const res = await fetch(apiUrl(`/api/fonts/${encodeURIComponent(id)}`), {
       method: "DELETE",
       headers: authHeaders({ Accept: "application/json" }),
     });
@@ -82,7 +89,7 @@ export const api = {
   async cancelJob(id: string, signal?: AbortSignal): Promise<{ job_id: string; status: string; message: string }> {
     let res: Response;
     try {
-      res = await fetch(`/api/jobs/${encodeURIComponent(id)}/cancel`, {
+      res = await fetch(apiUrl(`/api/jobs/${encodeURIComponent(id)}/cancel`), {
         method: "POST",
         signal,
         headers: authHeaders({ Accept: "application/json" }),
@@ -167,7 +174,7 @@ export function mine(input: MineInput, hooks: MineHooks): Promise<MineResponse> 
 async function mineUrl(input: Extract<MineInput, { kind: "url" }>, hooks: MineHooks): Promise<MineResponse> {
   let res: Response;
   try {
-    res = await fetch("/api/process/url", {
+    res = await fetch(apiUrl("/api/process/url"), {
       method: "POST",
       signal: hooks.signal,
       headers: authHeaders({ "Content-Type": "application/json" }),
@@ -227,7 +234,7 @@ function mineUpload(input: Extract<MineInput, { kind: "file" }>, hooks: MineHook
 
     hooks.signal.addEventListener("abort", () => xhr.abort(), { once: true });
 
-    xhr.open("POST", "/api/process/upload");
+    xhr.open("POST", apiUrl("/api/process/upload"));
     const token = accessTokenProvider?.();
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.send(form);
