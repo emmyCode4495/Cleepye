@@ -158,7 +158,6 @@ export default function Pricing() {
       )}
 
       <p className="mt-10 text-center text-xs text-dim">
-        Checkout uses Flutterwave first, then Paystack, then Korapay if needed.{" "}
         {!auth.user && (
           <>
             <Link to="/auth" className="text-lime hover:underline">
