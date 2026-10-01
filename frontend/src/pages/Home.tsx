@@ -95,7 +95,7 @@ export default function Home() {
                 Download app
               </Link>
             </div>
-            <p className="mt-4 text-xs text-dim">New accounts get 5 free credits · No card required</p>
+            <p className="mt-4 text-xs text-dim">New accounts get 2 free credits · No card required</p>
           </div>
 
           {/* Product visual / how-it-works preview */}

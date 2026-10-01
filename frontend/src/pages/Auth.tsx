@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { useNotice } from "../context/NoticeContext";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { Logo } from "../components/Logo";
-
+import { cn } from "../lib/cn";
 
 type Mode = "signin" | "signup";
 
@@ -80,7 +80,7 @@ export default function Auth() {
           {mode === "signin" ? "Welcome back" : "Create your account"}
         </h1>
         <p className="mt-1 text-sm text-muted">
-          {mode === "signin" ? "Sign in to mine clips and manage credits." : "Start with 5 free credits."}
+          {mode === "signin" ? "Sign in to mine clips and manage credits." : "Start with 2 free credits."}
         </p>
 
         <button

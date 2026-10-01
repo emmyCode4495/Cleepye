@@ -52,7 +52,7 @@ async def assert_can_start_job(
     if not profile:
         raise PermissionError("Profile not found")
 
-    plan = get_plan(profile.get("plan_id") or "starter")
+    plan = get_plan(profile.get("plan_id") or "free")
     balance = int(profile.get("credits_balance") or 0)
 
     if plan.max_clips_per_job and max_clips > plan.max_clips_per_job:

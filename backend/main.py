@@ -20,7 +20,7 @@ from backend.core.captions import list_styles
 from backend.core.fonts import list_fonts, save_font, delete_font
 from backend.models.database import init_db, list_jobs, get_job, cancel_job
 from backend.services.auth import AuthUser, optional_user, require_user
-from backend.services.pricing import plans_public, CREDIT_PACKS, credits_for_duration_seconds, credits_for_job
+from backend.services.pricing import plans_public, CREDIT_PACKS, credits_for_duration_seconds, credits_for_job, max_clips_for_plan
 from backend.services.payments import initiate_subscription_payment, PaymentError
 from backend.services.credits import get_profile, InsufficientCredits, PlanLimitExceeded
 from backend.services.supabase_client import supabase_enabled
@@ -134,13 +134,32 @@ async def api_me(user: AuthUser = Depends(require_user)):
                 "credits_monthly_allowance": None,
                 "subscription_status": "local",
             },
+            "plan_limits": {
+                "plan_id": "local",
+                "name": "Local",
+                "max_clips_per_job": 20,
+                "max_clips_ui": 20,
+                "max_source_minutes": 240,
+                "credits_per_month": None,
+            },
             "auth_required": get_settings().auth_required,
             "supabase": False,
         }
     profile = await get_profile(user.id)
+    from backend.services.pricing import get_plan, max_clips_for_plan
+    plan_id = (profile or {}).get("plan_id") or "free"
+    plan = get_plan(plan_id)
     return {
         "user": {"id": user.id, "email": user.email},
         "profile": profile,
+        "plan_limits": {
+            "plan_id": plan.id,
+            "name": plan.name,
+            "max_clips_per_job": plan.max_clips_per_job,
+            "max_clips_ui": max_clips_for_plan(plan.id),
+            "max_source_minutes": plan.max_source_minutes,
+            "credits_per_month": plan.credits_per_month,
+        },
         "auth_required": get_settings().auth_required,
         "supabase": True,
     }
@@ -158,7 +177,10 @@ async def process_from_url(
 
     if user.id != "local":
         try:
-            from backend.services.credits import assert_can_start_job
+            from backend.services.credits import assert_can_start_job, get_profile
+            profile = await get_profile(user.id)
+            plan_id = (profile or {}).get("plan_id") or "free"
+            req.max_clips = min(req.max_clips, max_clips_for_plan(plan_id))
             await assert_can_start_job(user.id, duration_sec=None, max_clips=req.max_clips)
         except InsufficientCredits as e:
             raise HTTPException(
@@ -201,7 +223,10 @@ async def process_from_upload(
 
     if user.id != "local":
         try:
-            from backend.services.credits import assert_can_start_job
+            from backend.services.credits import assert_can_start_job, get_profile
+            profile = await get_profile(user.id)
+            plan_id = (profile or {}).get("plan_id") or "free"
+            max_clips = min(max_clips, max_clips_for_plan(plan_id))
             await assert_can_start_job(user.id, duration_sec=None, max_clips=max_clips)
         except InsufficientCredits as e:
             raise HTTPException(

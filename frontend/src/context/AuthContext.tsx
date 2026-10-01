@@ -22,12 +22,22 @@ export type Profile = {
   subscription_status: string;
 };
 
+export type PlanLimits = {
+  plan_id: string;
+  name: string;
+  max_clips_per_job: number;
+  max_clips_ui: number;
+  max_source_minutes: number;
+  credits_per_month: number | null;
+};
+
 type AuthState = {
   configured: boolean;
   loading: boolean;
   session: Session | null;
   user: User | null;
   profile: Profile | null;
+  planLimits: PlanLimits | null;
   accessToken: string | null;
   refreshProfile: () => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
@@ -38,16 +48,16 @@ type AuthState = {
 
 const AuthCtx = createContext<AuthState | null>(null);
 
-async function fetchProfile(token: string): Promise<Profile | null> {
+async function fetchMe(token: string): Promise<{ profile: Profile | null; planLimits: PlanLimits | null }> {
   try {
     const res = await fetch("/api/me", {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { profile: null, planLimits: null };
     const data = await res.json();
-    return data.profile ?? null;
+    return { profile: data.profile ?? null, planLimits: data.plan_limits ?? null };
   } catch {
-    return null;
+    return { profile: null, planLimits: null };
   }
 }
 
@@ -55,15 +65,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(supabaseConfigured);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [planLimits, setPlanLimits] = useState<PlanLimits | null>(null);
 
   const refreshProfile = useCallback(async () => {
     const token = session?.access_token;
     if (!token) {
       setProfile(null);
+      setPlanLimits(null);
       return;
     }
-    const p = await fetchProfile(token);
+    const { profile: p, planLimits: lim } = await fetchMe(token);
     setProfile(p);
+    setPlanLimits(lim);
   }, [session?.access_token]);
 
   useEffect(() => {
@@ -89,9 +102,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session?.access_token) {
       setProfile(null);
+      setPlanLimits(null);
       return;
     }
-    fetchProfile(session.access_token).then(setProfile);
+    fetchMe(session.access_token).then(({ profile: p, planLimits: lim }) => {
+      setProfile(p);
+      setPlanLimits(lim);
+    });
   }, [session?.access_token]);
 
   useEffect(() => {
@@ -137,6 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       user: session?.user ?? null,
       profile,
+      planLimits,
       accessToken: session?.access_token ?? null,
       refreshProfile,
       signInWithPassword,
@@ -148,6 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       session,
       profile,
+      planLimits,
       refreshProfile,
       signInWithPassword,
       signUpWithPassword,

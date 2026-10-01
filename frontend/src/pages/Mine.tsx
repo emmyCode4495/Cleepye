@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { ArrowRight, ClipboardPaste,  Link2, Minus, Plus, ShieldCheck, Upload,  TerminalSquare } from "lucide-react";
+import { ArrowRight, ClipboardPaste, FileVideo, Link2, Minus, Plus, ShieldCheck, Upload, X, TerminalSquare, AlertTriangle } from "lucide-react";
 import { useShell } from "../components/Layout";
 import MiningPanel from "../components/MiningPanel";
 import { StyleSelect } from "../components/StyleSelect";
 import { FontUpload } from "../components/FontUpload";
 import { SourcePreview } from "../components/SourcePreview";
 import { useMine } from "../context/MineContext";
+import { useAuth } from "../context/AuthContext";
+import { useNotice } from "../context/NoticeContext";
 import { useAsync } from "../hooks/useAsync";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { api } from "../lib/api";
 import { ENGINE_START_HINT } from "../lib/brand";
 import { CAPTION_LOOKS, getLook, mergeStyles } from "../lib/captionStyles";
 import { cn } from "../lib/cn";
-import { detectPlatform, isValidHttpUrl } from "../lib/format";
+import { detectPlatform, formatBytes, isValidHttpUrl } from "../lib/format";
 
 type Source = "link" | "file";
 
@@ -32,16 +34,25 @@ function Step({ n, title, hint, children }: { n: string; title: string; hint?: s
 export default function Mine() {
   useDocumentTitle("New mine");
   const { state, start } = useMine();
- 
+  const notice = useNotice();
+  const auth = useAuth();
+  const maxClipsCap = auth.planLimits?.max_clips_ui ?? (auth.profile?.plan_id === "free" ? 1 : 20);
+  const planName = auth.planLimits?.name ?? auth.profile?.plan_id ?? "your plan";
   const { engine, recheck } = useShell();
 
   const [source, setSource] = useState<Source>("link");
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [maxClips, setMaxClips] = useState(8);
+  const [maxClips, setMaxClips] = useState(1);
+  // planLimits applied below after auth
   const [styleId, setStyleId] = useState("viral");
   const [fontId, setFontId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMaxClips((c) => Math.min(Math.max(1, c), maxClipsCap));
+  }, [maxClipsCap]);
+
   const [touched, setTouched] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -88,8 +99,8 @@ export default function Mine() {
     e.preventDefault();
     setTouched(true);
     if (!ready || state.status === "running") return;
-    if (source === "file" && file) start({ kind: "file", file, maxClips, style: styleId, fontId });
-    else start({ kind: "url", url: trimmed, maxClips, style: styleId, fontId });
+    if (source === "file" && file) start({ kind: "file", file, maxClips: Math.min(maxClips, maxClipsCap), style: styleId, fontId });
+    else start({ kind: "url", url: trimmed, maxClips: Math.min(maxClips, maxClipsCap), style: styleId, fontId });
   }
 
   if (state.status === "running") return <MiningPanel />;
@@ -232,10 +243,11 @@ export default function Mine() {
                 <p className="text-sm text-dim">Cleepye keeps the top-scoring moments.</p>
               </div>
               <div className="flex w-full items-center gap-4 sm:w-auto">
-                <input id="max-clips" type="range" min={1} max={20} value={maxClips} onChange={(e) => setMaxClips(Number(e.target.value))} className="h-1.5 flex-1 cursor-pointer sm:w-48" />
+                <input id="max-clips" type="range" min={1} max={maxClipsCap} value={Math.min(maxClips, maxClipsCap)} onChange={(e) => setMaxClips(Math.min(Number(e.target.value), maxClipsCap))} className="h-1.5 flex-1 cursor-pointer sm:w-48" />
                 <div className="flex items-center rounded-xl border bg-ink-2">
                   <button type="button" aria-label="Fewer clips" onClick={() => setMaxClips((n) => Math.max(1, n - 1))} className="p-2.5 text-muted hover:text-bone"><Minus className="h-4 w-4" /></button>
-                  <output className="w-8 text-center font-mono text-sm tabular-nums" htmlFor="max-clips">{maxClips}</output>
+                  <output className="w-8 text-center font-mono text-sm tabular-nums" htmlFor="max-clips">{Math.min(maxClips, maxClipsCap)}</output>
+                <span className="text-xs text-dim">max {maxClipsCap} on {planName}</span>
                   <button type="button" aria-label="More clips" onClick={() => setMaxClips((n) => Math.min(20, n + 1))} className="p-2.5 text-muted hover:text-bone"><Plus className="h-4 w-4" /></button>
                 </div>
               </div>
@@ -248,7 +260,7 @@ export default function Mine() {
               Start mining <ArrowRight className="h-4 w-4" />
             </button>
             <p className="text-sm text-dim">
-              {!ready ? (source === "link" ? "Paste a valid link to continue." : "Add a video to continue.") : `Up to ${maxClips} clips · ${look.name} captions`}
+              {!ready ? (source === "link" ? "Paste a valid link to continue." : "Add a video to continue.") : `Up to ${Math.min(maxClips, maxClipsCap)} clips · ${look.name} captions`}
             </p>
           </div>
         </form>

@@ -152,7 +152,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{style['font']},{style['fontsize']},{style['primary']},{style['highlight']},{style['outline']},&H80000000,-1,0,0,0,100,100,0,0,1,{style['outline_width']},{style['shadow']},{style['alignment']},40,40,{style['margin_v']},1
+Style: Default,{style['font']},{style['fontsize']},{style['primary']},{style['highlight']},{style['outline']},&H80000000,-1,0,0,0,100,100,1,0,1,{style['outline_width']},{style['shadow']},{style['alignment']},40,40,{style['margin_v']},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -167,12 +167,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not current_line_words:
             return
 
-        # Build karaoke line with \k tags (centiseconds)
+        # Build karaoke line with \k tags (centiseconds).
+        # Whisper tokens often have no trailing space after strip — add gaps.
         parts = []
-        for w in current_line_words:
+        n = len(current_line_words)
+        for i, w in enumerate(current_line_words):
             duration_cs = max(1, int(round((w["end"] - w["start"]) * 100)))
             word_text = _escape_ass_text(w["word"].strip())
-            parts.append(f"{{\\k{duration_cs}}}{word_text}")
+            if not word_text:
+                continue
+            if i < n - 1:
+                word_text = word_text + " "
+            parts.append(f"{{\k{duration_cs}}}{word_text}")
 
         text = "".join(parts)
         start_t = _format_ass_time(line_start - clip_start)
