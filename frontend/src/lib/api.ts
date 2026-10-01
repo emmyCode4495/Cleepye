@@ -30,7 +30,9 @@ export class ApiError extends Error {
   }
 }
 
-const OFFLINE_MESSAGE = `Can't reach the ${BRAND} engine. Start it with \`${ENGINE_START_HINT}\` and try again.`;
+const OFFLINE_MESSAGE = API_BASE
+  ? `Can't reach the ${BRAND} API at ${API_BASE}. Check that the server is deployed and VITE_API_URL is correct.`
+  : `Can't reach the ${BRAND} engine. Start it with \`${ENGINE_START_HINT}\` and try again.`;
 
 function detailToMessage(detail: unknown): string | null {
   if (typeof detail === "string") return detail;
@@ -110,7 +112,7 @@ export const api = {
     (await getJson<{ styles: Array<{ id: string; name: string }> }>("/api/styles", signal)).styles ?? [],
   async health(timeoutMs = 4000): Promise<boolean> {
     try {
-      const res = await fetch("/health", { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
+      const res = await fetch(apiUrl("/health"), { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
       return res.ok;
     } catch {
       return false;
