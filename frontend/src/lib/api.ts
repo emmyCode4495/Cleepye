@@ -3,7 +3,7 @@ import { BRAND, ENGINE_START_HINT } from "./brand";
 
 /** Hosted API origin when frontend is on Vercel (no trailing slash). Empty = same origin. */
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") || "";
-function apiUrl(path: string): string {
+export function apiUrl(path: string): string {
   if (path.startsWith("http")) return path;
   return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
 }
@@ -67,6 +67,28 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 }
 
 export const api = {
+  me: async (signal?: AbortSignal) =>
+    getJson<{
+      user: { id: string; email?: string | null };
+      profile: Record<string, unknown> | null;
+      plan_limits?: {
+        plan_id: string;
+        name: string;
+        max_clips_per_job: number;
+        max_clips_ui: number;
+        max_source_minutes: number;
+        credits_per_month: number | null;
+      } | null;
+    }>("/api/me", signal),
+
+  plans: async (signal?: AbortSignal) =>
+    getJson<{
+      plans: Array<Record<string, unknown>>;
+      packs?: unknown[];
+      currency?: string;
+      credit_rule?: string;
+    }>("/api/plans", signal),
+
   fonts: async (signal?: AbortSignal) =>
     (await getJson<{ fonts: Array<{ id: string; name: string; filename: string; size?: number }> }>("/api/fonts", signal)).fonts ?? [],
   async uploadFont(file: File): Promise<{ id: string; name: string; filename: string }> {

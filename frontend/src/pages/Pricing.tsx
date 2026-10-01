@@ -5,6 +5,7 @@ import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { useAuth } from "../context/AuthContext";
 import { useNotice } from "../context/NoticeContext";
 import { cn } from "../lib/cn";
+import { api, apiUrl } from "../lib/api";
 
 type Plan = {
   id: string;
@@ -35,11 +36,15 @@ export default function Pricing() {
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/plans")
-      .then((r) => r.json())
+    api
+      .plans()
       .then((d) => {
-        setPlans(d.plans || []);
+        setPlans((d.plans as Plan[]) || []);
         setRule(d.credit_rule || "");
+      })
+      .catch(() => {
+        setPlans([]);
+        setRule("");
       })
       .finally(() => setLoading(false));
   }, []);
@@ -55,7 +60,7 @@ export default function Pricing() {
     }
     setBusyPlan(planId);
     try {
-      const res = await fetch("/api/billing/subscribe", {
+      const res = await fetch(apiUrl("/api/billing/subscribe"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -158,6 +163,7 @@ export default function Pricing() {
       )}
 
       <p className="mt-10 text-center text-xs text-dim">
+        Checkout uses Flutterwave first, then Paystack, then Korapay if needed.{" "}
         {!auth.user && (
           <>
             <Link to="/auth" className="text-lime hover:underline">

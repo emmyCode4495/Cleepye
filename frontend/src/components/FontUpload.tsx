@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Loader2, Trash2, Type, Upload } from "lucide-react";
-import { api } from "../lib/api";
+import { api} from "../lib/api";
 import { useNotice } from "../context/NoticeContext";
 import { cn } from "../lib/cn";
 

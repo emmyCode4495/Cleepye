@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "../lib/supabase";
-import { setAccessTokenProvider } from "../lib/api";
+import {  apiUrl, setAccessTokenProvider } from "../lib/api";
 
 export type Profile = {
   id: string;
@@ -50,12 +50,18 @@ const AuthCtx = createContext<AuthState | null>(null);
 
 async function fetchMe(token: string): Promise<{ profile: Profile | null; planLimits: PlanLimits | null }> {
   try {
-    const res = await fetch("/api/me", {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    const res = await fetch(apiUrl("/api/me"), {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
     });
     if (!res.ok) return { profile: null, planLimits: null };
     const data = await res.json();
-    return { profile: data.profile ?? null, planLimits: data.plan_limits ?? null };
+    return {
+      profile: (data.profile as Profile | null) ?? null,
+      planLimits: (data.plan_limits as PlanLimits | null) ?? null,
+    };
   } catch {
     return { profile: null, planLimits: null };
   }
@@ -100,6 +106,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    setAccessTokenProvider(() => session?.access_token ?? null);
+    return () => setAccessTokenProvider(null);
+  }, [session?.access_token]);
+
+  useEffect(() => {
     if (!session?.access_token) {
       setProfile(null);
       setPlanLimits(null);
@@ -109,11 +120,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(p);
       setPlanLimits(lim);
     });
-  }, [session?.access_token]);
-
-  useEffect(() => {
-    setAccessTokenProvider(() => session?.access_token ?? null);
-    return () => setAccessTokenProvider(null);
   }, [session?.access_token]);
 
   const signInWithPassword = useCallback(async (email: string, password: string) => {
