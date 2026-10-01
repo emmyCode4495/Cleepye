@@ -51,7 +51,7 @@ exports/
 
 # ===== Model caches (Whisper / HuggingFace) =====
 .cache/
-models/
+
 *.bin
 *.pt
 *.onnx
