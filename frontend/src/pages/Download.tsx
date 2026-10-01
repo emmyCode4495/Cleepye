@@ -69,8 +69,7 @@ export default function Download() {
         Prefer the browser?{" "}
         <Link to="/mine" className="text-lime hover:underline">
           Open New mine
-        </Link>{" "}
-        and run the local engine with <code className="text-bone">python run.py</code>.
+        </Link>
       </p>
     </div>
   );
