@@ -201,6 +201,78 @@ def compute_crop_boxes(
         return default
 
 
+def compute_crop_boxes_for_range(
+    video_path: str | Path,
+    start: float,
+    end: float,
+    src_width: int,
+    src_height: int,
+    sample_fps: float = 2.0,
+    analysis_width: int = 480,
+) -> List[dict]:
+    """
+    Fast face tracking for ONE clip range.
+
+    Instead of decoding the whole video with OpenCV, ask ffmpeg to seek straight
+    to the clip, downscale and sample at `sample_fps`, and pipe tiny raw frames
+    to the detector. Cost scales with clip length, not video length.
+    Always succeeds — falls back to a centered crop.
+    """
+    default = [{"time": round(start, 3), "x_center": 0.5, "y_center": 0.42}]
+    if not _CV2_OK or src_width <= 0 or src_height <= 0 or end <= start:
+        return default
+
+    import subprocess
+
+    aw = max(160, min(int(analysis_width), src_width))
+    aw -= aw % 2
+    ah = max(2, int(round(aw * src_height / src_width)))
+    ah -= ah % 2
+    frame_bytes = aw * ah * 3
+
+    cmd = [
+        "ffmpeg", "-v", "error", "-nostdin",
+        "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}",
+        "-i", str(video_path),
+        "-an", "-sn",
+        "-vf", f"fps={sample_fps},scale={aw}:{ah}",
+        "-pix_fmt", "bgr24", "-f", "rawvideo", "pipe:1",
+    ]
+    try:
+        detector_type, detector = _create_detector(aw, ah)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        centers: list[tuple[float, float]] = []
+        times: list[float] = []
+        idx = 0
+        assert proc.stdout is not None
+        while True:
+            buf = proc.stdout.read(frame_bytes)
+            if len(buf) < frame_bytes:
+                break
+            frame = np.frombuffer(buf, dtype=np.uint8).reshape((ah, aw, 3))
+            boxes = detect_faces_in_frame(frame, detector_type, detector)
+            if boxes:
+                x, y, bw, bh = max(boxes, key=lambda b: b[2] * b[3])
+                centers.append((x + bw / 2, y + bh / 2))
+            else:
+                centers.append((0.5, 0.42))
+            times.append(start + idx / sample_fps)
+            idx += 1
+        proc.stdout.close()
+        proc.wait(timeout=30)
+
+        if not centers:
+            return default
+        smoothed = smooth_centers(centers)
+        return [
+            {"time": round(t, 3), "x_center": round(cx, 4), "y_center": round(cy, 4)}
+            for t, (cx, cy) in zip(times, smoothed)
+        ]
+    except Exception as e:
+        logger.warning(f"Fast face tracking failed ({e}) — using center crop")
+        return default
+
+
 def build_ffmpeg_crop_filter(
     crop_data: List[dict],
     input_width: int,

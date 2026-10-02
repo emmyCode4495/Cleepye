@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen2.5:7b"
 
     # Whisper
-    whisper_model: str = "small"
+    whisper_model: str = "small"   # try "distil-large-v3" or "large-v3-turbo" on GPU
     whisper_device: str = "auto"
     whisper_compute_type: str = "int8"
 
@@ -57,6 +57,23 @@ class Settings(BaseSettings):
 
     # Performance
     max_concurrent_jobs: int = 2
+    # Parallel ffmpeg renders per job. 0 = auto (based on CPU cores / GPU)
+    render_workers: int = 0
+    # x264 preset when encoding on CPU: ultrafast | superfast | veryfast | faster | fast
+    render_preset: str = "veryfast"
+    render_crf: int = 21
+    # Video encoder: auto | libx264 | h264_nvenc | h264_videotoolbox | h264_qsv
+    video_encoder: str = "auto"
+    # Cap source downloads (clips are 1080 wide at most, so 4K is wasted time)
+    max_download_height: int = 1080
+    # Face tracking sample rate (frames/sec) and analysis frame width in px
+    face_sample_fps: float = 2.0
+    face_analysis_width: int = 480
+    # Whisper speed knobs
+    whisper_beam_size: int = 1
+    whisper_batch_size: int = 16
+    # Cache transcripts so re-mining the same video is instant
+    cache_transcripts: bool = True
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

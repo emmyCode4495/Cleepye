@@ -4,6 +4,8 @@ Cleepye API — async jobs, live progress, Supabase auth + credits.
 
 from __future__ import annotations
 
+import asyncio
+
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -83,6 +85,16 @@ class JobAccepted(BaseModel):
     message: str
 
 
+_job_slots: asyncio.Semaphore | None = None
+
+
+def _get_job_slots() -> asyncio.Semaphore:
+    global _job_slots
+    if _job_slots is None:
+        _job_slots = asyncio.Semaphore(max(1, get_settings().max_concurrent_jobs))
+    return _job_slots
+
+
 async def _run_job(
     *,
     job_id: str,
@@ -97,18 +109,19 @@ async def _run_job(
     aspect_ratio: str = "9:16",
 ) -> None:
     try:
-        await process_video(
-            source=source,
-            is_url=is_url,
-            max_clips=max_clips,
-            caption_style=caption_style,
-            job_id=job_id,
-            user_id=user_id,
-            font_id=font_id,
-            min_clip_duration=min_clip_duration,
-            max_clip_duration=max_clip_duration,
-            aspect_ratio=aspect_ratio,
-        )
+        async with _get_job_slots():  # honour MAX_CONCURRENT_JOBS
+            await process_video(
+                source=source,
+                is_url=is_url,
+                max_clips=max_clips,
+                caption_style=caption_style,
+                job_id=job_id,
+                user_id=user_id,
+                font_id=font_id,
+                min_clip_duration=min_clip_duration,
+                max_clip_duration=max_clip_duration,
+                aspect_ratio=aspect_ratio,
+            )
     except Exception:
         logger.exception(f"Background job {job_id} failed")
 
