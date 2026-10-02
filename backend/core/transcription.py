@@ -15,6 +15,8 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -109,6 +111,24 @@ def _save_cache(path: Path, language: str | None, result: dict[str, Any]) -> Non
         logger.debug(f"Transcript cache write failed: {e}")
 
 
+
+def _extract_audio(path: Path) -> Path:
+    """Decode to 16 kHz mono WAV with ffmpeg so faster-whisper never has to
+    open the video through PyAV (avoids PyAV/faster-whisper version clashes)."""
+    fd, name = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    out = Path(name)
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-nostdin", "-i", str(path),
+         "-vn", "-ac", "1", "-ar", "16000", str(out)],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        out.unlink(missing_ok=True)
+        raise RuntimeError(f"Audio extraction failed: {r.stderr[-300:]}")
+    return out
+
+
 # ------------------------------------------------------------ transcribe ----
 
 def transcribe(
@@ -140,44 +160,48 @@ def transcribe(
         condition_on_previous_text=False,
     )
 
-    if _batched is not None:
-        segments_gen, info = _batched.transcribe(
-            str(path), batch_size=settings.whisper_batch_size, **kwargs
-        )
-    else:
-        segments_gen, info = model.transcribe(str(path), **kwargs)
+    audio_path = _extract_audio(path)
+    try:
+        if _batched is not None:
+            segments_gen, info = _batched.transcribe(
+                str(audio_path), batch_size=settings.whisper_batch_size, **kwargs
+            )
+        else:
+            segments_gen, info = model.transcribe(str(audio_path), **kwargs)
 
-    total = max(float(info.duration or 0.0), 1.0)
-    segments: list[dict[str, Any]] = []
-    full_text_parts: list[str] = []
-    last_report = 0.0
+        total = max(float(info.duration or 0.0), 1.0)
+        segments: list[dict[str, Any]] = []
+        full_text_parts: list[str] = []
+        last_report = 0.0
 
-    for seg in segments_gen:
-        words = [
-            {
-                "word": w.word,
-                "start": round(w.start, 3),
-                "end": round(w.end, 3),
-                "probability": round(w.probability, 3),
-            }
-            for w in (seg.words or [])
-        ]
-        text = seg.text.strip()
-        segments.append(
-            {
-                "id": len(segments),
-                "start": round(seg.start, 3),
-                "end": round(seg.end, 3),
-                "text": text,
-                "words": words,
-            }
-        )
-        full_text_parts.append(text)
+        for seg in segments_gen:
+            words = [
+                {
+                    "word": w.word,
+                    "start": round(w.start, 3),
+                    "end": round(w.end, 3),
+                    "probability": round(w.probability, 3),
+                }
+                for w in (seg.words or [])
+            ]
+            text = seg.text.strip()
+            segments.append(
+                {
+                    "id": len(segments),
+                    "start": round(seg.start, 3),
+                    "end": round(seg.end, 3),
+                    "text": text,
+                    "words": words,
+                }
+            )
+            full_text_parts.append(text)
 
-        frac = min(seg.end / total, 1.0)
-        if on_progress and frac - last_report >= 0.02:  # throttle to ~50 updates
-            last_report = frac
-            on_progress(frac)
+            frac = min(seg.end / total, 1.0)
+            if on_progress and frac - last_report >= 0.02:  # throttle to ~50 updates
+                last_report = frac
+                on_progress(frac)
+    finally:
+        audio_path.unlink(missing_ok=True)
 
     result = {
         "language": info.language,
