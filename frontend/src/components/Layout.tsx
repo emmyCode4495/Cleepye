@@ -4,6 +4,7 @@ import {
   Plus,
   Loader2,
   Sparkles,
+  Wand2,
   Home,
   Download,
   Mail,
@@ -31,6 +32,7 @@ type NavItem = { to: string; label: string; icon: typeof Home; end?: boolean; au
 const PUBLIC_NAV: NavItem[] = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/mine", label: "New mine", icon: Plus, end: true },
+  { to: "/clarity", label: "Clarity", icon: Wand2, end: true },
   { to: "/pricing", label: "Pricing", icon: Sparkles },
   { to: "/download", label: "Download", icon: Download },
   { to: "/contact", label: "Contact", icon: Mail },

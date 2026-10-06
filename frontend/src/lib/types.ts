@@ -8,6 +8,9 @@ export interface Clip {
   title: string;
   hook: string;
   caption_style: string;
+  /** Cleepye Clarity preset applied to this clip, if any */
+  clarity?: string;
+  clarity_error?: string;
 }
 
 /** Row returned by GET /api/jobs */
@@ -50,6 +53,9 @@ export interface MineResponse {
   message: string;
 }
 
+/** Where to apply Cleepye Clarity */
+export type ClarityTarget = "none" | "source" | "clips" | "both";
+
 export type MineInput =
   | {
       kind: "url";
@@ -60,6 +66,8 @@ export type MineInput =
       minClipDuration?: number;
       maxClipDuration?: number;
       aspectRatio?: string;
+      clarityTarget?: ClarityTarget;
+      clarityPreset?: string;
     }
   | {
       kind: "file";
@@ -70,4 +78,6 @@ export type MineInput =
       minClipDuration?: number;
       maxClipDuration?: number;
       aspectRatio?: string;
+      clarityTarget?: ClarityTarget;
+      clarityPreset?: string;
     };

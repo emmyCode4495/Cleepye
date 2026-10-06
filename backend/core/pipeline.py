@@ -201,6 +201,9 @@ async def process_video(
     min_clip_duration: float = 15,
     max_clip_duration: float = 60,
     aspect_ratio: str = "9:16",
+    # Cleepye Clarity (optional AI enhancement)
+    clarity_target: str = "none",  # none | source | clips | both
+    clarity_preset: str = "standard",  # standard | sharp | ultra
 ) -> dict[str, Any]:
     settings = get_settings()
     job_id = job_id or str(uuid.uuid4())[:8]
@@ -209,6 +212,11 @@ async def process_video(
 
     source_type = "url" if is_url else "upload"
     create_job(job_id, source_type, str(source), caption_style)
+
+    clarity_target = (clarity_target or "none").lower().strip()
+    if clarity_target not in ("none", "source", "clips", "both"):
+        clarity_target = "none"
+    clarity_preset = (clarity_preset or settings.clarity_default_preset or "standard").lower().strip()
 
     try:
         # 1. Ingest
@@ -222,6 +230,37 @@ async def process_video(
                 raise FileNotFoundError(video_path)
 
         info = await asyncio.to_thread(get_video_info, video_path)
+
+        # Optional: enhance the full source before mining
+        if clarity_target in ("source", "both"):
+            from backend.services.enhance import clarity_available, enhance_video, ClarityError
+
+            if not clarity_available():
+                logger.warning(f"[{job_id}] Clarity requested but not configured — skipping source enhance")
+            else:
+                _ensure_not_cancelled(job_id)
+                enhanced_src = job_dir / "source_clarity.mp4"
+
+                def _src_progress(stage: str, pct: float, msg: str) -> None:
+                    # Map 0–100 Clarity progress into ~16–22% of the job bar
+                    mapped = 16 + (pct / 100.0) * 6
+                    _progress(job_id, "clarity", mapped, msg)
+
+                try:
+                    video_path = await enhance_video(
+                        video_path,
+                        enhanced_src,
+                        preset=clarity_preset,
+                        progress=_src_progress,
+                    )
+                    info = await asyncio.to_thread(get_video_info, video_path)
+                    _progress(
+                        job_id, "clarity", 22,
+                        f"Source enhanced with Clarity ({info['width']}x{info['height']})",
+                    )
+                except ClarityError as e:
+                    logger.warning(f"[{job_id}] Source Clarity failed: {e} — continuing with original")
+                    _progress(job_id, "download", 18, f"Clarity skipped: {e}")
 
         # Charge credits once duration is known (Supabase users only)
         if user_id:
@@ -374,6 +413,43 @@ async def process_video(
             raise JobCancelled("Cancelled by user")
         clips.sort(key=lambda c: c["index"])
 
+        # Optional: enhance each mined clip with Clarity
+        if clarity_target in ("clips", "both") and clips:
+            from backend.services.enhance import clarity_available, enhance_video, ClarityError
+
+            if not clarity_available():
+                logger.warning(f"[{job_id}] Clarity requested but not configured — skipping clip enhance")
+            else:
+                _ensure_not_cancelled(job_id)
+                clarity_dir = job_dir / "clips_clarity"
+                clarity_dir.mkdir(exist_ok=True)
+                enhanced_clips: list[dict] = []
+                n = len(clips)
+                for idx, clip in enumerate(clips):
+                    _ensure_not_cancelled(job_id)
+                    src_clip = Path(clip["path"])
+                    out_clip = clarity_dir / f"clip_{clip['index']:02d}_clarity.mp4"
+                    base_pct = 96 + (idx / max(n, 1)) * 3
+
+                    def _clip_progress(stage: str, pct: float, msg: str, _base=base_pct) -> None:
+                        mapped = _base + (pct / 100.0) * (3 / max(n, 1))
+                        _progress(job_id, "clarity", mapped, f"Clip {idx + 1}/{n}: {msg}")
+
+                    try:
+                        await enhance_video(
+                            src_clip,
+                            out_clip,
+                            preset=clarity_preset,
+                            progress=_clip_progress,
+                        )
+                        clip = {**clip, "path": str(out_clip), "clarity": clarity_preset}
+                    except ClarityError as e:
+                        logger.warning(f"[{job_id}] Clip {clip['index']} Clarity failed: {e}")
+                        clip = {**clip, "clarity_error": str(e)}
+                    enhanced_clips.append(clip)
+                clips = enhanced_clips
+                _progress(job_id, "clarity", 99, f"Clarity applied to {len(clips)} clips")
+
         result = {
             "job_id": job_id,
             "source": str(video_path),
@@ -382,6 +458,10 @@ async def process_video(
             "candidates_found": len(candidates),
             "clips_rendered": len(clips),
             "clips": clips,
+            "clarity": {
+                "target": clarity_target,
+                "preset": clarity_preset if clarity_target != "none" else None,
+            },
         }
         (job_dir / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         save_job_result(result, source_type=source_type, source=str(source), caption_style=caption_style)

@@ -6,6 +6,7 @@ import { NoticeProvider } from "./context/NoticeContext";
 import { ToastProvider } from "./context/ToastContext";
 import Home from "./pages/Home";
 import Mine from "./pages/Mine";
+import Clarity from "./pages/Clarity";
 import History from "./pages/History";
 import JobDetail from "./pages/JobDetail";
 import Auth from "./pages/Auth";
@@ -45,6 +46,7 @@ export default function App() {
                 <Route element={<Layout />}>
                   <Route index element={<HomeOrRedirect />} />
                   <Route path="mine" element={<Mine />} />
+                  <Route path="clarity" element={<Clarity />} />
                   <Route path="pricing" element={<Pricing />} />
                   <Route path="contact" element={<Contact />} />
                   <Route path="download" element={<Download />} />

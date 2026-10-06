@@ -12,6 +12,7 @@ A hybrid of Viral Minner’s focused “mine viral nuggets” experience and Vir
 - Free re-mine of the same video
 - Project history
 - Optional BYOK for higher-quality AI scoring
+- **Cleepye Clarity** — optional AI enhancement on the original video and/or mined clips (server-side key; users only see Cleepye options)
 
 ## Features (MVP Roadmap)
 
@@ -65,11 +66,29 @@ pip install -r requirements.txt
 # Copy env example
 cp .env.example .env
 
+# Optional: enable Cleepye Clarity (AI sharpen/upscale on source or clips)
+# TOPAZ_API_KEY=your_key_here   # server-only; never exposed to the UI as a third-party name
+
 # Run the API
 python -m backend.main
 ```
 
 The API will start at `http://localhost:8741`
+
+### Cleepye Clarity
+
+When `TOPAZ_API_KEY` is set on the server:
+
+- **Standalone Clarity** (`/clarity`) — enhance any video (URL or upload) without mining. Strength: Standard / Sharp / Ultra.
+- **Mine form** optional step: Off / Original video / Mined clips / Source + clips.
+- **Job results** can run Clarity on a single clip after the fact.
+- All UI labels say **Clarity** under the Cleepye brand; the underlying provider is never shown to end users.
+
+API:
+- `POST /api/clarity/url` `{ "url", "preset" }`
+- `POST /api/clarity/upload` multipart `file` + `preset`
+- `GET /api/clarity` — presets + availability
+- Poll `GET /api/jobs/{id}` the same as mining jobs.
 
 ## Project Structure
 

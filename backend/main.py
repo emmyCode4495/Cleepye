@@ -77,6 +77,22 @@ class UrlRequest(BaseModel):
     min_clip_duration: float = Field(default=15, ge=5, le=120)
     max_clip_duration: float = Field(default=60, ge=10, le=180)
     aspect_ratio: str = "9:16"
+    # Cleepye Clarity — none | source | clips | both
+    clarity_target: str = "none"
+    clarity_preset: str = "standard"
+
+
+class EnhanceClipRequest(BaseModel):
+    """Apply Clarity to an already-mined clip."""
+    job_id: str
+    clip_index: int = Field(ge=1)
+    preset: str = "standard"
+
+
+class ClarityUrlRequest(BaseModel):
+    """Standalone Clarity — enhance a video from URL, no mining."""
+    url: str
+    preset: str = "standard"
 
 
 class JobAccepted(BaseModel):
@@ -107,6 +123,8 @@ async def _run_job(
     min_clip_duration: float = 15,
     max_clip_duration: float = 60,
     aspect_ratio: str = "9:16",
+    clarity_target: str = "none",
+    clarity_preset: str = "standard",
 ) -> None:
     try:
         async with _get_job_slots():  # honour MAX_CONCURRENT_JOBS
@@ -121,6 +139,8 @@ async def _run_job(
                 min_clip_duration=min_clip_duration,
                 max_clip_duration=max_clip_duration,
                 aspect_ratio=aspect_ratio,
+                clarity_target=clarity_target,
+                clarity_preset=clarity_preset,
             )
     except Exception:
         logger.exception(f"Background job {job_id} failed")
@@ -150,6 +170,42 @@ async def get_styles():
 @app.get("/api/aspects")
 async def get_aspects():
     return {"aspects": list_aspects()}
+
+
+@app.get("/api/clarity")
+async def get_clarity_options():
+    """Public Clarity options (Cleepye-branded). Available only when server has a key."""
+    from backend.services.enhance import (
+        clarity_available,
+        list_clarity_presets,
+        list_clarity_groups,
+    )
+
+    available = clarity_available()
+    return {
+        "available": available,
+        "presets": list_clarity_presets("video") if available else [],
+        "image_presets": list_clarity_presets("image") if available else [],
+        "video_groups": list_clarity_groups("video") if available else [],
+        "image_groups": list_clarity_groups("image") if available else [],
+        "media_types": [
+            {"id": "video", "name": "Video", "description": "Upscale, smooth motion, slow-mo, or SDR→HDR."},
+            {"id": "image", "name": "Image", "description": "Upscale, denoise, restore, or portrait enhance."},
+        ] if available else [],
+        "targets": [
+            {"id": "none", "name": "Off", "description": "No extra enhancement."},
+            {"id": "source", "name": "Original video", "description": "Sharpen the full source before mining moments."},
+            {"id": "clips", "name": "Mined clips", "description": "Enhance only the final short clips."},
+            {"id": "both", "name": "Source + clips", "description": "Enhance the source and each mined clip."},
+        ] if available else [],
+        # Mine pipeline still uses standard|sharp|ultra aliases
+        "default_preset": "precise" if available else None,
+        "mine_presets": [
+            {"id": "standard", "name": "Standard", "description": "Precise enhance (default)."},
+            {"id": "sharp", "name": "Sharp", "description": "Stronger generative recovery."},
+            {"id": "ultra", "name": "Ultra", "description": "Maximum detail + upscale."},
+        ] if available else [],
+    }
 
 
 @app.get("/api/plans")
@@ -237,6 +293,8 @@ async def process_from_url(
         min_clip_duration=req.min_clip_duration,
         max_clip_duration=req.max_clip_duration,
         aspect_ratio=req.aspect_ratio,
+        clarity_target=req.clarity_target,
+        clarity_preset=req.clarity_preset,
     )
     return JobAccepted(
         job_id=job_id,
@@ -255,6 +313,8 @@ async def process_from_upload(
     min_clip_duration: float = Form(15),
     max_clip_duration: float = Form(60),
     aspect_ratio: str = Form("9:16"),
+    clarity_target: str = Form("none"),
+    clarity_preset: str = Form("standard"),
     user: AuthUser = Depends(require_user),
 ):
     settings = get_settings()
@@ -294,12 +354,208 @@ async def process_from_upload(
         min_clip_duration=min_clip_duration,
         max_clip_duration=max_clip_duration,
         aspect_ratio=aspect_ratio,
+        clarity_target=clarity_target,
+        clarity_preset=clarity_preset,
     )
     return JobAccepted(
         job_id=job_id,
         status="running",
         message="Job started — poll /api/jobs/{job_id} for progress",
     )
+
+
+@app.post("/api/clarity/url", response_model=JobAccepted)
+async def clarity_from_url(
+    req: ClarityUrlRequest,
+    background_tasks: BackgroundTasks,
+    user: AuthUser = Depends(require_user),
+):
+    """Enhance a video from URL with Cleepye Clarity only (no mining)."""
+    from backend.services.enhance import clarity_available, process_clarity_only
+
+    if not clarity_available():
+        raise HTTPException(status_code=503, detail="Clarity is not configured on this server.")
+
+    settings = get_settings()
+    if settings.auth_required and user.id == "local":
+        raise HTTPException(status_code=401, detail="Sign in required")
+
+    if user.id != "local":
+        try:
+            from backend.services.credits import assert_can_start_job
+            await assert_can_start_job(user.id, duration_sec=None, max_clips=1)
+        except InsufficientCredits as e:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Not enough credits (need at least {e.needed}, have {e.balance}).",
+            )
+        except PlanLimitExceeded as e:
+            raise HTTPException(status_code=403, detail=str(e))
+
+    job_id = str(uuid.uuid4())[:8]
+
+    async def _run() -> None:
+        try:
+            async with _get_job_slots():
+                await process_clarity_only(
+                    source=req.url,
+                    is_url=True,
+                    job_id=job_id,
+                    preset=req.preset or "standard",
+                    user_id=None if user.id == "local" else user.id,
+                )
+        except Exception:
+            logger.exception(f"Clarity job {job_id} failed")
+
+    background_tasks.add_task(_run)
+    return JobAccepted(
+        job_id=job_id,
+        status="running",
+        message="Clarity started — poll /api/jobs/{job_id} for progress",
+    )
+
+
+@app.post("/api/clarity/upload", response_model=JobAccepted)
+async def clarity_from_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    preset: str = Form("standard"),
+    media: str = Form("video"),  # video | image
+    user: AuthUser = Depends(require_user),
+):
+    """Enhance an uploaded video or image with Cleepye Clarity only (no mining)."""
+    from backend.services.enhance import clarity_available, process_clarity_only, process_clarity_image
+
+    if not clarity_available():
+        raise HTTPException(status_code=503, detail="Clarity is not configured on this server.")
+
+    settings = get_settings()
+    if settings.auth_required and user.id == "local":
+        raise HTTPException(status_code=401, detail="Sign in required")
+
+    if user.id != "local":
+        try:
+            from backend.services.credits import assert_can_start_job
+            await assert_can_start_job(user.id, duration_sec=None, max_clips=1)
+        except InsufficientCredits as e:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Not enough credits (need at least {e.needed}, have {e.balance}).",
+            )
+        except PlanLimitExceeded as e:
+            raise HTTPException(status_code=403, detail=str(e))
+
+    media_type = (media or "video").lower().strip()
+    if media_type not in ("video", "image"):
+        media_type = "video"
+
+    job_id = str(uuid.uuid4())[:8]
+    name = file.filename or ("image.jpg" if media_type == "image" else "video.mp4")
+    suffix = Path(name).suffix or (".jpg" if media_type == "image" else ".mp4")
+    dest = settings.storage_dir / "temp" / f"{job_id}_clarity{suffix}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(await file.read())
+
+    async def _run() -> None:
+        try:
+            async with _get_job_slots():
+                uid = None if user.id == "local" else user.id
+                if media_type == "image":
+                    await process_clarity_image(
+                        source=dest,
+                        job_id=job_id,
+                        preset=preset or "standard",
+                        user_id=uid,
+                    )
+                else:
+                    await process_clarity_only(
+                        source=dest,
+                        is_url=False,
+                        job_id=job_id,
+                        preset=preset or "standard",
+                        user_id=uid,
+                    )
+        except Exception:
+            logger.exception(f"Clarity job {job_id} failed")
+
+    background_tasks.add_task(_run)
+    return JobAccepted(
+        job_id=job_id,
+        status="running",
+        message="Clarity started — poll /api/jobs/{job_id} for progress",
+    )
+
+
+@app.post("/api/clarity/enhance-clip")
+async def api_enhance_clip(
+    req: EnhanceClipRequest,
+    user: AuthUser = Depends(require_user),
+):
+    """
+    Apply Cleepye Clarity to one already-mined clip.
+    Replaces the clip file in place (keeps a .orig backup).
+    """
+    from backend.services.enhance import clarity_available, enhance_video, ClarityError
+
+    if not clarity_available():
+        raise HTTPException(status_code=503, detail="Clarity is not configured on this server.")
+
+    job = get_job(req.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = job.get("result") or {}
+    clips = result.get("clips") or []
+    clip = next((c for c in clips if int(c.get("index", -1)) == req.clip_index), None)
+    if not clip:
+        raise HTTPException(status_code=404, detail=f"Clip {req.clip_index} not found on this job")
+
+    path = Path(clip["path"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Clip file missing on disk")
+
+    backup = path.with_suffix(path.suffix + ".orig")
+    if not backup.exists():
+        backup.write_bytes(path.read_bytes())
+
+    out_tmp = path.with_name(path.stem + "_clarity_tmp.mp4")
+    try:
+        await enhance_video(path if not backup.exists() else backup, out_tmp, preset=req.preset)
+        out_tmp.replace(path)
+    except ClarityError as e:
+        if out_tmp.exists():
+            out_tmp.unlink(missing_ok=True)
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        if out_tmp.exists():
+            out_tmp.unlink(missing_ok=True)
+        logger.exception("Clarity enhance-clip failed")
+        raise HTTPException(status_code=502, detail=f"Clarity failed: {e}")
+
+    # Update stored result so UI picks up the enhanced path metadata
+    clip["clarity"] = req.preset
+    clip["path"] = str(path)
+    for i, c in enumerate(clips):
+        if int(c.get("index", -1)) == req.clip_index:
+            clips[i] = clip
+            break
+    result["clips"] = clips
+    job_dir = get_settings().storage_dir / "jobs" / req.job_id
+    (job_dir / "result.json").write_text(
+        __import__("json").dumps(result, indent=2), encoding="utf-8"
+    )
+    try:
+        from backend.models.database import save_job_result
+        save_job_result(
+            {**result, "job_id": req.job_id},
+            source_type=job.get("source_type") or "upload",
+            source=job.get("source") or "",
+            caption_style=job.get("caption_style") or "viral",
+        )
+    except Exception:
+        logger.warning("Could not persist clarity result to DB", exc_info=True)
+
+    return {"ok": True, "clip_index": req.clip_index, "preset": req.preset, "path": str(path)}
 
 
 @app.get("/api/fonts")
@@ -370,8 +626,23 @@ async def get_clip(job_id: str, filename: str):
     settings = get_settings()
     path = settings.storage_dir / "jobs" / job_id / "clips" / filename
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Clip not found")
-    return FileResponse(path, media_type="video/mp4", filename=filename)
+        # also allow clips_clarity folder
+        alt = settings.storage_dir / "jobs" / job_id / "clips_clarity" / filename
+        if alt.exists():
+            path = alt
+        else:
+            raise HTTPException(status_code=404, detail="Clip not found")
+    suffix = path.suffix.lower()
+    media = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(path, media_type=media, filename=filename)
 
 
 @app.get("/api/credits/estimate")

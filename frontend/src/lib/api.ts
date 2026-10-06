@@ -135,6 +135,30 @@ export const api = {
     getJson<JobDetail>(`/api/jobs/${encodeURIComponent(id)}`, signal),
   styles: async (signal?: AbortSignal) =>
     (await getJson<{ styles: Array<{ id: string; name: string }> }>("/api/styles", signal)).styles ?? [],
+
+  clarity: async (signal?: AbortSignal) =>
+    getJson<{
+      available: boolean;
+      presets: Array<{ id: string; name: string; description: string; group?: string }>;
+      image_presets?: Array<{ id: string; name: string; description: string; group?: string }>;
+      video_groups?: Array<{ id: string; name: string }>;
+      image_groups?: Array<{ id: string; name: string }>;
+      media_types?: Array<{ id: string; name: string; description: string }>;
+      targets: Array<{ id: string; name: string; description: string }>;
+      default_preset: string | null;
+      mine_presets?: Array<{ id: string; name: string; description: string }>;
+    }>("/api/clarity", signal),
+
+  async enhanceClip(jobId: string, clipIndex: number, preset = "standard"): Promise<{ ok: boolean; clip_index: number; preset: string }> {
+    const res = await fetch(apiUrl("/api/clarity/enhance-clip"), {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
+      body: JSON.stringify({ job_id: jobId, clip_index: clipIndex, preset }),
+    });
+    if (!res.ok) throw await readError(res);
+    return res.json();
+  },
+
   async health(timeoutMs = 4000): Promise<boolean> {
     try {
       const res = await fetch(apiUrl("/health"), { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
@@ -213,6 +237,8 @@ async function mineUrl(input: Extract<MineInput, { kind: "url" }>, hooks: MineHo
         min_clip_duration: input.minClipDuration ?? 15,
         max_clip_duration: input.maxClipDuration ?? 60,
         aspect_ratio: input.aspectRatio ?? "9:16",
+        clarity_target: input.clarityTarget ?? "none",
+        clarity_preset: input.clarityPreset ?? "standard",
       }),
     });
   } catch (e) {
@@ -236,6 +262,8 @@ function mineUpload(input: Extract<MineInput, { kind: "file" }>, hooks: MineHook
     form.append("min_clip_duration", String(input.minClipDuration ?? 15));
     form.append("max_clip_duration", String(input.maxClipDuration ?? 60));
     form.append("aspect_ratio", input.aspectRatio ?? "9:16");
+    form.append("clarity_target", input.clarityTarget ?? "none");
+    form.append("clarity_preset", input.clarityPreset ?? "standard");
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) hooks.onUploadProgress?.(e.loaded, e.total);
@@ -273,3 +301,77 @@ function mineUpload(input: Extract<MineInput, { kind: "file" }>, hooks: MineHook
     xhr.send(form);
   });
 }
+
+/** Standalone Clarity from URL (no mining). */
+export async function clarityFromUrl(
+  input: { url: string; preset?: string },
+  hooks: MineHooks
+): Promise<MineResponse> {
+  let res: Response;
+  try {
+    res = await fetch(apiUrl("/api/clarity/url"), {
+      method: "POST",
+      signal: hooks.signal,
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ url: input.url, preset: input.preset ?? "standard" }),
+    });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") throw e;
+    throw new ApiError(OFFLINE_MESSAGE, { offline: true });
+  }
+  if (!res.ok) throw await readError(res);
+  const accepted = (await res.json()) as MineResponse;
+  return waitForJob(accepted.job_id, hooks);
+}
+
+/** Standalone Clarity from file upload (no mining). */
+export function clarityFromUpload(
+  input: { file: File; preset?: string; media?: "video" | "image" },
+  hooks: MineHooks
+): Promise<MineResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append("file", input.file);
+    form.append("preset", input.preset ?? "standard");
+    form.append("media", input.media ?? "video");
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) hooks.onUploadProgress?.(e.loaded, e.total);
+    };
+
+    xhr.onload = async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          hooks.onUploadDone?.();
+          const accepted = JSON.parse(xhr.responseText) as MineResponse;
+          const result = await waitForJob(accepted.job_id, hooks);
+          resolve(result);
+        } catch (e) {
+          reject(e);
+        }
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          const msg = detailToMessage(body?.detail) || `Upload failed (${xhr.status})`;
+          reject(new ApiError(msg, { status: xhr.status }));
+        } catch {
+          reject(new ApiError(`Upload failed (${xhr.status})`, { status: xhr.status }));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new ApiError(OFFLINE_MESSAGE, { offline: true }));
+    xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
+    hooks.signal.addEventListener("abort", () => xhr.abort(), { once: true });
+
+    xhr.open("POST", apiUrl("/api/clarity/upload"));
+    const token = accessTokenProvider?.();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.send(form);
+  });
+}
+
+// Attach to api object for convenience
+(api as any).clarityUrl = clarityFromUrl;
+(api as any).clarityUpload = clarityFromUpload;

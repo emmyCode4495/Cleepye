@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     # Cache transcripts so re-mining the same video is instant
     cache_transcripts: bool = True
 
+    # Cleepye Clarity (AI enhancement — provider API key kept server-side)
+    # Leave empty to hide Clarity options in the product.
+    topaz_api_key: str = ""
+    # Default Clarity preset when user enables enhancement: standard | sharp | ultra
+    clarity_default_preset: str = "standard"
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.storage_dir.mkdir(parents=True, exist_ok=True)

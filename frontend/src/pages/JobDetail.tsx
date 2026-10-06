@@ -85,7 +85,7 @@ export default function JobDetail() {
       </div>
     );
   }
-  return <Results job={job} />;
+  return <Results job={job} onRefresh={reload} />;
 }
 
 function BackLink() {
@@ -96,13 +96,16 @@ function BackLink() {
   );
 }
 
-function Results({ job }: { job: Job }) {
+function Results({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
   const clips = useMemo(() => job.clips ?? [], [job.clips]);
   const [order, setOrder] = useState<Order>("score");
   const [selected, setSelected] = useState<number>(() => [...clips].sort((a, b) => b.score - a.score)[0]?.index ?? -1);
   const [userPicked, setUserPicked] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhanceError, setEnhanceError] = useState<string | null>(null);
   const playerRef = useRef<HTMLDivElement>(null);
+  const clarity = useAsync((s) => api.clarity(s).catch(() => null), []);
 
   const sorted = useMemo(() => [...clips].sort((a, b) => (order === "score" ? b.score - a.score : a.start - b.start)), [clips, order]);
   const current = clips.find((c) => c.index === selected) ?? sorted[0];
@@ -143,6 +146,20 @@ function Results({ job }: { job: Job }) {
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
       /* clipboard unavailable */
+    }
+  }
+
+  async function applyClarity(preset = "sharp") {
+    if (!current || !job?.id) return;
+    setEnhancing(true);
+    setEnhanceError(null);
+    try {
+      await api.enhanceClip(job.id, current.index, preset);
+      onRefresh();
+    } catch (e) {
+      setEnhanceError(e instanceof ApiError ? e.message : "Clarity failed");
+    } finally {
+      setEnhancing(false);
     }
   }
 
@@ -209,16 +226,25 @@ function Results({ job }: { job: Job }) {
           <section className="mt-10 grid grid-cols-[minmax(0,1fr)] items-start gap-8 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)] xl:gap-12">
             <div ref={playerRef} className="scroll-mt-24 lg:sticky lg:top-24">
               <div className="mx-auto w-full max-w-[340px] overflow-hidden rounded-[1.75rem] border-[6px] border-ink-3 bg-black shadow-[0_30px_80px_-30px_rgb(0_0_0/0.9)] lg:max-w-none">
-                <video
-                  key={current.index}
-                  src={`${clipUrl(job.id, current)}#t=0.1`}
-                  controls
-                  playsInline
-                  loop
-                  preload="metadata"
-                  autoPlay={userPicked}
-                  className="aspect-[9/16] max-h-[72vh] w-full bg-black object-contain"
-                />
+                {/\.(jpe?g|png|webp|gif)$/i.test(current.path) ? (
+                  <img
+                    key={current.index}
+                    src={clipUrl(job.id, current)}
+                    alt={current.title || "Enhanced image"}
+                    className="aspect-[9/16] max-h-[72vh] w-full bg-black object-contain"
+                  />
+                ) : (
+                  <video
+                    key={current.index}
+                    src={`${clipUrl(job.id, current)}#t=0.1`}
+                    controls
+                    playsInline
+                    loop
+                    preload="metadata"
+                    autoPlay={userPicked}
+                    className="aspect-[9/16] max-h-[72vh] w-full bg-black object-contain"
+                  />
+                )}
               </div>
               <div className="mx-auto mt-5 max-w-[340px] lg:max-w-none">
                 <div className="flex items-start gap-3">
@@ -230,12 +256,30 @@ function Results({ job }: { job: Job }) {
                 </div>
                 <p className="mt-3 text-sm leading-relaxed text-muted">{current.hook}</p>
                 <p className="mt-3 font-mono text-xs text-dim">{timecode(current.start)} → {timecode(current.end)} · {Math.round(current.duration)}s</p>
-                <div className="mt-5 flex gap-2">
+                <div className="mt-5 flex flex-wrap gap-2">
                   <a href={clipUrl(job.id, current)} download={fileNameFromPath(current.path)} className="btn-primary flex-1"><Download className="h-4 w-4" /> Download</a>
                   <button onClick={copyText} className="btn-ghost" aria-label="Copy title and hook">
                     {copied ? <Check className="h-4 w-4 text-lime" /> : <Copy className="h-4 w-4" />} {copied ? "Copied" : "Copy text"}
                   </button>
+                  {clarity.data?.available && (
+                    <button
+                      type="button"
+                      onClick={() => applyClarity(current.clarity ? "ultra" : "sharp")}
+                      disabled={enhancing}
+                      className="btn-ghost"
+                      title="Sharpen this clip with Cleepye Clarity"
+                    >
+                      <Sparkles className={cn("h-4 w-4", enhancing && "animate-pulse")} />
+                      {enhancing ? "Clarifying…" : current.clarity ? "Re-Clarity" : "Clarity"}
+                    </button>
+                  )}
                 </div>
+                {current.clarity && (
+                  <p className="mt-2 text-xs text-lime">Clarity · {current.clarity}</p>
+                )}
+                {enhanceError && (
+                  <p className="mt-2 text-xs text-red-400">{enhanceError}</p>
+                )}
               </div>
             </div>
 

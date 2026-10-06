@@ -43,10 +43,16 @@ const STEPS = [
     body: "Tracks the subject and crops vertical.",
   },
   {
-    ids: ["render", "done"],
+    ids: ["render"],
     icon: Captions,
     title: "Render",
     body: "Cuts clips and burns in captions.",
+  },
+  {
+    ids: ["clarity", "done"],
+    icon: Gauge,
+    title: "Clarity",
+    body: "Optional AI sharpen on source or clips.",
   },
 ] as const;
 

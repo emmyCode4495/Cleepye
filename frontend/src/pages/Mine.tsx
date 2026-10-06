@@ -52,6 +52,8 @@ export default function Mine() {
   const [aspectRatio, setAspectRatio] = useState("9:16");
 
   const [fontId, setFontId] = useState<string | null>(null);
+  const [clarityTarget, setClarityTarget] = useState<"none" | "source" | "clips" | "both">("none");
+  const [clarityPreset, setClarityPreset] = useState("standard");
 
   useEffect(() => {
     setMaxClips((c) => Math.min(Math.max(1, c), maxClipsCap));
@@ -62,10 +64,15 @@ export default function Mine() {
 
   const styles = useAsync((s) => api.styles(s).catch(() => null), []);
   const aspects = useAsync((s) => api.aspects(s).catch(() => []), []);
+  const clarity = useAsync((s) => api.clarity(s).catch(() => null), []);
 
   const fonts = useAsync((s) => api.fonts(s).catch(() => []), []);
   const looks = useMemo(() => mergeStyles(styles.data), [styles.data]);
   const look = getLook(styleId, looks.find((l) => l.id === styleId)?.name);
+
+  useEffect(() => {
+    if (clarity.data?.default_preset) setClarityPreset(clarity.data.default_preset);
+  }, [clarity.data?.default_preset]);
 
   useEffect(() => {
     if (!looks.some((l) => l.id === styleId)) setStyleId(looks[0]?.id ?? CAPTION_LOOKS[0].id);
@@ -105,8 +112,34 @@ export default function Mine() {
     e.preventDefault();
     setTouched(true);
     if (!ready || state.status === "running") return;
-    if (source === "file" && file) start({ kind: "file", file, maxClips: Math.min(maxClips, maxClipsCap), style: styleId, fontId, minClipDuration, maxClipDuration, aspectRatio });
-    else start({ kind: "url", url: trimmed, maxClips: Math.min(maxClips, maxClipsCap), style: styleId, fontId, minClipDuration, maxClipDuration, aspectRatio });
+    const clarityOpts = {
+      clarityTarget: clarity.data?.available ? clarityTarget : ("none" as const),
+      clarityPreset: clarity.data?.available ? clarityPreset : "standard",
+    };
+    if (source === "file" && file)
+      start({
+        kind: "file",
+        file,
+        maxClips: Math.min(maxClips, maxClipsCap),
+        style: styleId,
+        fontId,
+        minClipDuration,
+        maxClipDuration,
+        aspectRatio,
+        ...clarityOpts,
+      });
+    else
+      start({
+        kind: "url",
+        url: trimmed,
+        maxClips: Math.min(maxClips, maxClipsCap),
+        style: styleId,
+        fontId,
+        minClipDuration,
+        maxClipDuration,
+        aspectRatio,
+        ...clarityOpts,
+      });
   }
 
   if (state.status === "running") return <MiningPanel />;
@@ -123,6 +156,13 @@ export default function Mine() {
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">
             Drop a long video or paste a link. Cleepye transcribes it, ranks the strongest stretches, reframes them to vertical, and burns in animated captions — ready to post.
+          </p>
+          <p className="mt-3 text-sm text-dim">
+            Only need to sharpen a video?{" "}
+            <a href="/clarity" className="text-lime hover:underline">
+              Use Clarity only
+            </a>{" "}
+            — no mining required.
           </p>
         </div>
 
@@ -322,6 +362,57 @@ export default function Mine() {
               </div>
             </div>
           </Step>
+
+          {clarity.data?.available && (
+            <Step n="04" title="Clarity" hint="Optional AI sharpen">
+              <div className="space-y-4">
+                <p className="text-sm text-muted">
+                  Apply Cleepye Clarity to clean up soft or low-res footage. Choose whether to enhance the original video, the mined clips, or both.
+                </p>
+                <div>
+                  <p className="mb-2 text-sm font-medium">Apply to</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(clarity.data.targets ?? []).map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setClarityTarget(t.id as typeof clarityTarget)}
+                        className={cn(
+                          "rounded-xl border px-3 py-2 text-left text-sm transition",
+                          clarityTarget === t.id ? "border-lime/40 bg-lime/10 text-lime" : "hover:border-white/20"
+                        )}
+                        title={t.description}
+                      >
+                        <span className="font-medium">{t.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {clarityTarget !== "none" && (
+                  <div>
+                    <p className="mb-2 text-sm font-medium">Strength</p>
+                    <div className="flex flex-wrap gap-2">
+                      {(clarity.data.presets ?? []).map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setClarityPreset(p.id)}
+                          className={cn(
+                            "rounded-xl border px-3 py-2 text-left text-sm transition",
+                            clarityPreset === p.id ? "border-lime/40 bg-lime/10 text-lime" : "hover:border-white/20"
+                          )}
+                          title={p.description}
+                        >
+                          <span className="font-medium">{p.name}</span>
+                          <span className="mt-0.5 block text-xs text-dim">{p.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Step>
+          )}
 
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
