@@ -5,7 +5,7 @@ import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { useAuth } from "../context/AuthContext";
 import { useNotice } from "../context/NoticeContext";
 import { cn } from "../lib/cn";
-import { api, apiUrl } from "../lib/api";
+import {  apiUrl } from "../lib/api";
 
 type Plan = {
   id: string;
