@@ -18,6 +18,8 @@ export type Profile = {
   avatar_url?: string | null;
   plan_id: string;
   credits_balance: number;
+  clarity_credits_balance?: number;
+  clarity_monthly_allowance?: number;
   credits_monthly_allowance: number;
   subscription_status: string;
 };

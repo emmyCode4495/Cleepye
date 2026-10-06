@@ -123,8 +123,14 @@ export default function Layout() {
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
             <MiningPill />
             {signedIn && auth.profile && (
-              <Link to="/profile" className="chip hidden font-mono text-lime sm:inline-flex" title="Credits">
-                {auth.profile.credits_balance} cr
+              <Link
+                to="/profile"
+                className="chip hidden font-mono text-lime sm:inline-flex"
+                title="Mining · Clarity credits"
+              >
+                {auth.profile.credits_balance}m
+                <span className="text-dim">·</span>
+                {(auth.profile as { clarity_credits_balance?: number }).clarity_credits_balance ?? 0}c
               </Link>
             )}
             {auth.configured && !auth.user && (

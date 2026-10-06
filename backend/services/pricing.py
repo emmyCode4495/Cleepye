@@ -18,6 +18,7 @@ class Plan:
     id: str
     name: str
     price_monthly_ngn: int
+    price_monthly_usd: int  # whole dollars for checkout
     credits_per_month: int  # mining credits
     clarity_credits_per_month: int
     max_clips_per_job: int  # 0 = unlimited
@@ -36,6 +37,7 @@ PLANS: list[Plan] = [
         id="free",
         name="Free",
         price_monthly_ngn=0,
+        price_monthly_usd=0,
         credits_per_month=1,
         clarity_credits_per_month=0,
         max_clips_per_job=1,
@@ -55,6 +57,7 @@ PLANS: list[Plan] = [
         id="starter",
         name="Starter",
         price_monthly_ngn=10_000,
+        price_monthly_usd=9,
         credits_per_month=8,
         clarity_credits_per_month=40,
         max_clips_per_job=8,
@@ -77,6 +80,7 @@ PLANS: list[Plan] = [
         id="creator",
         name="Creator",
         price_monthly_ngn=20_000,
+        price_monthly_usd=17,
         credits_per_month=20,
         clarity_credits_per_month=120,
         max_clips_per_job=12,
@@ -101,6 +105,7 @@ PLANS: list[Plan] = [
         id="pro",
         name="Pro",
         price_monthly_ngn=35_000,
+        price_monthly_usd=29,
         credits_per_month=40,
         clarity_credits_per_month=300,
         max_clips_per_job=0,  # unlimited
@@ -125,16 +130,15 @@ PLANS: list[Plan] = [
 
 # Mining top-ups (cheap for you)
 CREDIT_PACKS = [
-    {"id": "pack_5", "credits": 5, "price_ngn": 4_000, "label": "5 mining credits", "type": "mining"},
-    {"id": "pack_15", "credits": 15, "price_ngn": 10_000, "label": "15 mining credits", "type": "mining"},
-    {"id": "pack_40", "credits": 40, "price_ngn": 22_000, "label": "40 mining credits", "type": "mining"},
+    {"id": "pack_5", "credits": 5, "price_ngn": 4_000, "price_usd": 4, "label": "5 mining credits", "type": "mining"},
+    {"id": "pack_15", "credits": 15, "price_ngn": 10_000, "price_usd": 9, "label": "15 mining credits", "type": "mining"},
+    {"id": "pack_40", "credits": 40, "price_ngn": 22_000, "price_usd": 18, "label": "40 mining credits", "type": "mining"},
 ]
 
-# Clarity top-ups (priced off Topaz cost)
 CLARITY_PACKS = [
-    {"id": "clarity_50", "credits": 50, "price_ngn": 6_000, "label": "50 Clarity credits", "type": "clarity"},
-    {"id": "clarity_150", "credits": 150, "price_ngn": 15_000, "label": "150 Clarity credits", "type": "clarity"},
-    {"id": "clarity_400", "credits": 400, "price_ngn": 35_000, "label": "400 Clarity credits", "type": "clarity"},
+    {"id": "clarity_50", "credits": 50, "price_ngn": 6_000, "price_usd": 5, "label": "50 Clarity credits", "type": "clarity"},
+    {"id": "clarity_150", "credits": 150, "price_ngn": 15_000, "price_usd": 12, "label": "150 Clarity credits", "type": "clarity"},
+    {"id": "clarity_400", "credits": 400, "price_ngn": 35_000, "price_usd": 28, "label": "400 Clarity credits", "type": "clarity"},
 ]
 
 PAYMENT_PROVIDER_ORDER = ("flutterwave", "paystack", "korapay")
@@ -218,6 +222,21 @@ def format_ngn(amount: int) -> str:
     return f"₦{amount:,}"
 
 
+def format_usd(amount: int) -> str:
+    return f"${amount:,}"
+
+
+def format_money(amount: int, currency: str) -> str:
+    return format_ngn(amount) if currency == "NGN" else format_usd(amount)
+
+
+def price_for_plan(plan: Plan, currency: str) -> int:
+    """Major units: NGN whole naira, USD whole dollars."""
+    if currency == "NGN":
+        return plan.price_monthly_ngn
+    return plan.price_monthly_usd
+
+
 def credits_for_job() -> int:
     return 1
 
@@ -233,14 +252,21 @@ def max_clips_for_plan(plan_id: str) -> int:
     return plan.max_clips_per_job
 
 
-def plans_public() -> list[dict]:
-    return [
-        {
+def plans_public(currency: str = "NGN") -> list[dict]:
+    currency = "NGN" if currency == "NGN" else "USD"
+    out = []
+    for p in PLANS:
+        if not (p.listed and p.price_monthly_ngn > 0):
+            continue
+        amount = price_for_plan(p, currency)
+        out.append({
             "id": p.id,
             "name": p.name,
-            "currency": "NGN",
-            "price_monthly": p.price_monthly_ngn,
-            "price_label": "Free" if p.price_monthly_ngn == 0 else f"{format_ngn(p.price_monthly_ngn)}/mo",
+            "currency": currency,
+            "price_monthly": amount,
+            "price_monthly_ngn": p.price_monthly_ngn,
+            "price_monthly_usd": p.price_monthly_usd,
+            "price_label": "Free" if amount == 0 else f"{format_money(amount, currency)}/mo",
             "credits_per_month": p.credits_per_month,
             "clarity_credits_per_month": p.clarity_credits_per_month,
             "max_clips_per_job": p.max_clips_per_job,
@@ -250,14 +276,23 @@ def plans_public() -> list[dict]:
             "popular": p.popular,
             "clarity_all_workflows": p.clarity_all_workflows,
             "clarity_advanced": p.clarity_advanced,
+        })
+    return out
+
+
+def packs_public(currency: str = "NGN") -> dict:
+    currency = "NGN" if currency == "NGN" else "USD"
+
+    def localize(pack: dict) -> dict:
+        amount = pack["price_ngn"] if currency == "NGN" else pack["price_usd"]
+        return {
+            **pack,
+            "currency": currency,
+            "price": amount,
+            "price_label": format_money(amount, currency),
         }
-        for p in PLANS
-        if p.listed and p.price_monthly_ngn > 0
-    ]
 
-
-def packs_public() -> dict:
     return {
-        "mining": CREDIT_PACKS,
-        "clarity": CLARITY_PACKS,
+        "mining": [localize(p) for p in CREDIT_PACKS],
+        "clarity": [localize(p) for p in CLARITY_PACKS],
     }

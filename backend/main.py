@@ -23,7 +23,7 @@ from backend.core.fonts import list_fonts, save_font, delete_font
 from backend.core.reframe import list_aspects
 from backend.models.database import init_db, list_jobs, get_job, cancel_job
 from backend.services.auth import AuthUser, optional_user, require_user
-from backend.services.pricing import plans_public, CREDIT_PACKS, credits_for_duration_seconds, credits_for_job, max_clips_for_plan
+from backend.services.pricing import plans_public, packs_public, CREDIT_PACKS, credits_for_duration_seconds, credits_for_job, max_clips_for_plan
 from backend.services.payments import (
     initiate_subscription_payment,
     PaymentError,
@@ -209,8 +209,26 @@ async def get_clarity_options():
 
 
 @app.get("/api/plans")
-async def api_plans():
-    return {"plans": plans_public(), "packs": CREDIT_PACKS, "currency": "NGN", "credit_rule": "1 credit = 1 mining job (one source video). Retries may be free per plan."}
+async def api_plans(request: Request, currency: str | None = None):
+    from backend.services.geo import resolve_currency
+
+    geo = await resolve_currency(request, override=currency)
+    cur = geo["currency"]
+    return {
+        "plans": plans_public(cur),
+        "packs": packs_public(cur),
+        "currency": cur,
+        "country": geo.get("country"),
+        "currency_source": geo.get("source"),
+        "supported_currencies": ["NGN", "USD"],
+        "credit_rule": (
+            "Mining credits: 1 credit = 1 source video mined. "
+            "Clarity credits: used for enhance, upscale, slow-mo, HDR, and images. "
+            "Free includes 1 mining credit only — no Clarity. "
+            "Each paid plan includes both. "
+            "Prices shown in your local currency (NGN in Nigeria, USD elsewhere)."
+        ),
+    }
 
 
 @app.get("/api/me")
@@ -249,6 +267,7 @@ async def api_me(user: AuthUser = Depends(require_user)):
             "max_clips_ui": max_clips_for_plan(plan.id),
             "max_source_minutes": plan.max_source_minutes,
             "credits_per_month": plan.credits_per_month,
+            "clarity_credits_per_month": getattr(plan, "clarity_credits_per_month", 0),
         },
         "auth_required": get_settings().auth_required,
         "supabase": True,
@@ -657,22 +676,30 @@ async def estimate_credits(duration_sec: float = 0):
 class SubscribeRequest(BaseModel):
     plan_id: str
     redirect_url: str | None = None
+    currency: str | None = None
 
 
 @app.post("/api/billing/subscribe")
-async def api_subscribe(req: SubscribeRequest, user: AuthUser = Depends(require_user)):
+async def api_subscribe(
+    req: SubscribeRequest,
+    request: Request,
+    user: AuthUser = Depends(require_user),
+):
     """Start subscription checkout (Flutterwave → Paystack → Korapay)."""
     if user.id == "local":
         raise HTTPException(status_code=401, detail="Sign in required to subscribe")
     settings = get_settings()
     redirect = req.redirect_url or settings.payment_redirect_url
     email = user.email or "user@cleepye.local"
+    from backend.services.geo import resolve_currency
+    geo = await resolve_currency(request, override=req.currency)
     try:
         result = await initiate_subscription_payment(
             plan_id=req.plan_id,
             email=email,
             user_id=user.id,
             redirect_url=redirect,
+            currency=geo["currency"],
         )
         return result
     except PaymentError as e:

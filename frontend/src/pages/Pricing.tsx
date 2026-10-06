@@ -14,6 +14,7 @@ type Plan = {
   price_monthly: number;
   price_label: string;
   credits_per_month: number;
+  clarity_credits_per_month?: number;
   max_clips_per_job: number;
   max_source_minutes: number;
   description: string;
@@ -21,7 +22,10 @@ type Plan = {
   popular?: boolean;
 };
 
-function formatNgn(n: number) {
+function formatMoney(n: number, currency: string) {
+  if (currency === "USD") {
+    return `$${n.toLocaleString("en-US")}`;
+  }
   return `₦${n.toLocaleString("en-NG")}`;
 }
 
@@ -33,6 +37,8 @@ export default function Pricing() {
   const [params] = useSearchParams();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [rule, setRule] = useState("");
+  const [currency, setCurrency] = useState<"NGN" | "USD">("NGN");
+  const [country, setCountry] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
 
@@ -60,11 +66,15 @@ export default function Pricing() {
   }, [params, auth.accessToken]);
 
   useEffect(() => {
-    api
-      .plans()
+    const preferred = (localStorage.getItem("cleepye_currency") || "").toUpperCase();
+    const q = preferred === "NGN" || preferred === "USD" ? `?currency=${preferred}` : "";
+    fetch(apiUrl(`/api/plans${q}`), { headers: { Accept: "application/json" } })
+      .then((r) => r.json())
       .then((d) => {
         setPlans((d.plans as Plan[]) || []);
         setRule(d.credit_rule || "");
+        if (d.currency === "USD" || d.currency === "NGN") setCurrency(d.currency);
+        setCountry(d.country || null);
       })
       .catch(() => {
         setPlans([]);
@@ -93,6 +103,7 @@ export default function Pricing() {
         },
         body: JSON.stringify({
           plan_id: planId,
+          currency,
           redirect_url: `${window.location.origin}/pricing?paid=1`,
         }),
       });
@@ -118,14 +129,50 @@ export default function Pricing() {
     <div className="mx-auto max-w-5xl">
       <div className="mb-10 text-center">
         <p className="eyebrow text-lime">Pricing</p>
-        <h1 className="mt-2 font-display text-4xl font-bold tracking-tight">Credits that match your volume</h1>
-        <p className="mx-auto mt-3 max-w-xl text-muted">
-          {rule || "1 credit = 1 mining job. Prices in Naira (₦)."}
+        <h1 className="mt-2 font-display text-4xl font-bold tracking-tight">Mining + Clarity, one plan</h1>
+        <p className="mx-auto mt-3 max-w-2xl text-muted">
+          {rule ||
+            "Mining credits: 1 = one source video. Clarity credits: enhance, upscale, slow-mo, HDR, images. Free gets 1 mining credit only — no Clarity."}
         </p>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-sm">
+          <span className="text-dim">Currency:</span>
+          {(["NGN", "USD"] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => {
+                localStorage.setItem("cleepye_currency", c);
+                setCurrency(c);
+                setLoading(true);
+                fetch(apiUrl(`/api/plans?currency=${c}`), { headers: { Accept: "application/json" } })
+                  .then((r) => r.json())
+                  .then((d) => {
+                    setPlans((d.plans as Plan[]) || []);
+                    setRule(d.credit_rule || "");
+                    setCountry(d.country || null);
+                  })
+                  .finally(() => setLoading(false));
+              }}
+              className={cn(
+                "rounded-full border px-3 py-0.5 text-xs font-medium transition",
+                currency === c ? "border-lime/50 bg-lime/10 text-lime" : "border-white/10 text-dim hover:text-bone"
+              )}
+            >
+              {c}
+            </button>
+          ))}
+          {country && <span className="text-xs text-dim">Detected: {country}</span>}
+        </div>
         {auth.profile && (
-          <p className="mt-4 text-sm text-bone">
-            You’re on <span className="capitalize text-lime">{auth.profile.plan_id}</span> ·{" "}
-            <span className="font-mono text-lime">{auth.profile.credits_balance}</span> credits left
+          <p className="mt-3 text-sm text-bone">
+            You’re on <span className="capitalize text-lime">{auth.profile.plan_id}</span>
+            {" · "}
+            <span className="font-mono text-lime">{auth.profile.credits_balance ?? 0}</span> mining
+            {" · "}
+            <span className="font-mono text-lime">
+              {(auth.profile as { clarity_credits_balance?: number }).clarity_credits_balance ?? 0}
+            </span>{" "}
+            Clarity
           </p>
         )}
       </div>
@@ -151,10 +198,12 @@ export default function Pricing() {
               )}
               <h2 className="font-display text-xl font-semibold">{p.name}</h2>
               <p className="mt-2 font-display text-3xl font-bold tracking-tight">
-                {formatNgn(p.price_monthly)}
+                {formatMoney(p.price_monthly, p.currency || currency)}
                 <span className="text-base font-normal text-dim">/mo</span>
               </p>
-              <p className="mt-1 font-mono text-xs text-dim">{p.credits_per_month} credits / month</p>
+              <p className="mt-1 font-mono text-xs text-dim">
+                {p.credits_per_month} mining · {p.clarity_credits_per_month ?? 0} Clarity / month
+              </p>
               {p.description && <p className="mt-3 text-sm text-muted">{p.description}</p>}
               <ul className="mt-5 flex-1 space-y-2">
                 {p.features.map((f) => (
