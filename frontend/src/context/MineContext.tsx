@@ -102,7 +102,16 @@ export function MineProvider({ children }: { children: ReactNode }) {
           if (offline) {
             notice.offline(message);
           } else {
-            notice.error("Mining failed", message);
+            const low = message.toLowerCase();
+            const linkIssue =
+              low.includes("youtube") ||
+              low.includes("download") ||
+              low.includes("upload the video") ||
+              low.includes("upload the file") ||
+              low.includes("bot check") ||
+              low.includes("rate-limit") ||
+              low.includes("rate limited");
+            notice.error(linkIssue ? "Link download failed" : "Mining failed", message);
           }
         })
         .finally(() => {

@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     video_encoder: str = "auto"
     # Cap source downloads (clips are 1080 wide at most, so 4K is wasted time)
     max_download_height: int = 1080
+    # Optional Netscape cookies.txt for age-gated / "sign in" YouTube videos
+    youtube_cookies_path: str = ""
+    # Lower concurrent fragment downloads on shared cloud IPs (1–8)
+    youtube_concurrent_fragments: int = 1
     # Face tracking sample rate (frames/sec) and analysis frame width in px
     face_sample_fps: float = 2.0
     face_analysis_width: int = 480

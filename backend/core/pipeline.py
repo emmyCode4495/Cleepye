@@ -46,30 +46,123 @@ def _ensure_not_cancelled(job_id: str) -> None:
 
 
 
+def friendly_download_error(exc: BaseException) -> str:
+    """Map yt-dlp / network failures to a clear user-facing message."""
+    msg = str(exc) or type(exc).__name__
+    low = msg.lower()
+    if any(
+        x in low
+        for x in (
+            "sign in to confirm",
+            "not a bot",
+            "confirm you're not a bot",
+            "confirm you are not a bot",
+        )
+    ):
+        return (
+            "YouTube blocked this download (bot check). "
+            "Upload the video file instead, or set YOUTUBE_COOKIES_PATH on the server "
+            "with a cookies.txt from a browser that can play the video."
+        )
+    if any(x in low for x in ("http error 429", "too many requests", "rate-limit", "rate limit")):
+        return (
+            "YouTube rate-limited this server. Wait a few minutes and try again, "
+            "or upload the file instead of using a link."
+        )
+    if any(x in low for x in ("http error 403", "forbidden", "blocked")):
+        return (
+            "YouTube refused the download from this server IP. "
+            "Upload the video file, or run downloads from a residential network / cookies."
+        )
+    if any(x in low for x in ("private video", "this video is private")):
+        return "This video is private. Only the owner can download it — upload a file you have access to."
+    if any(x in low for x in ("members-only", "members only", "join this channel")):
+        return "This video is members-only. Upload the file if you have access, or use cookies from a membership account."
+    if any(x in low for x in ("age-restricted", "age restricted", "inappropriate for some users")):
+        return (
+            "This video is age-restricted. Provide YOUTUBE_COOKIES_PATH from a logged-in browser, "
+            "or upload the file."
+        )
+    if any(x in low for x in ("video unavailable", "has been removed", "not available")):
+        return "This video is unavailable or was removed. Check the link or upload the file."
+    if any(x in low for x in ("copyright", "who has blocked it")):
+        return "This video is blocked in this region or by the uploader. Try upload instead."
+    if "unsupported url" in low or "no video" in low:
+        return "Could not recognize this as a downloadable video link. Use a full YouTube URL or upload a file."
+    # Generic fallback — keep short
+    short = msg.strip().split("")[0][:240]
+    return (
+        f"Could not download this link ({short}). "
+        "Upload the video file instead, or try again later."
+    )
+
+
 def download_video(url: str, output_dir: Path) -> Path:
+    """
+    Download a public video URL via yt-dlp with retries and softer cloud-friendly settings.
+    Optional Netscape cookies.txt (YOUTUBE_COOKIES_PATH) helps age-gated / sign-in videos.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
-    h = get_settings().max_download_height
+    settings = get_settings()
+    h = settings.max_download_height
     outtmpl = str(output_dir / "%(id)s.%(ext)s")
-    ydl_opts = {
+    concurrent = max(1, min(8, int(getattr(settings, "youtube_concurrent_fragments", 1) or 1)))
+
+    ydl_opts: dict[str, Any] = {
         "outtmpl": outtmpl,
-        # Clips top out at 1080 wide, so never pull 4K: much faster downloads.
+        # Clips top out at 1080 wide — never pull 4K
         "format": (
-            f"bv*[height<={h}][ext=mp4]+ba[ext=m4a]/bv*[height<={h}]+ba/b[height<={h}]/b"
+            f"bv*[height<={h}][ext=mp4]+ba[ext=m4a]/"
+            f"bv*[height<={h}]+ba/b[height<={h}]/b"
         ),
         "merge_output_format": "mp4",
-        "concurrent_fragment_downloads": 8,
         "quiet": True,
         "no_warnings": True,
+        "retries": 10,
+        "fragment_retries": 10,
+        "file_access_retries": 5,
+        "concurrent_fragment_downloads": concurrent,
+        "sleep_interval": 1,
+        "max_sleep_interval": 3,
+        "extractor_args": {
+            "youtube": {
+                # Rotate player clients when one is blocked
+                "player_client": ["android", "web", "ios"],
+            }
+        },
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        path = Path(filename)
-        if path.suffix != ".mp4":
-            mp4_path = path.with_suffix(".mp4")
-            if mp4_path.exists():
-                path = mp4_path
-        return path
+
+    cookies = (getattr(settings, "youtube_cookies_path", None) or "").strip()
+    if cookies:
+        cookie_path = Path(cookies)
+        if cookie_path.is_file():
+            ydl_opts["cookiefile"] = str(cookie_path)
+            logger.info(f"YouTube download using cookies: {cookie_path.name}")
+        else:
+            logger.warning(f"YOUTUBE_COOKIES_PATH set but file missing: {cookies}")
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if not info:
+                raise RuntimeError("No video information returned")
+            filename = ydl.prepare_filename(info)
+            path = Path(filename)
+            if path.suffix != ".mp4":
+                mp4_path = path.with_suffix(".mp4")
+                if mp4_path.exists():
+                    path = mp4_path
+            if not path.exists():
+                # merge_output_format may rename
+                for cand in output_dir.glob("*"):
+                    if cand.is_file() and cand.suffix.lower() in {".mp4", ".mkv", ".webm"}:
+                        return cand
+                raise RuntimeError("Download finished but output file was not found")
+            return path
+    except Exception as e:
+        friendly = friendly_download_error(e)
+        logger.error(f"YouTube/link download failed: {e}")
+        raise RuntimeError(friendly) from e
 
 
 def _parse_fps(raw: str) -> float:
