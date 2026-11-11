@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { Loader2, Mail } from "lucide-react";
+import { Eye, EyeOff, Loader2, Mail } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useNotice } from "../context/NoticeContext";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
@@ -20,6 +20,7 @@ export default function Auth() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   if (!auth.configured) {
     return (
@@ -54,7 +55,10 @@ export default function Auth() {
         setInfo("Check your email to confirm your account (if confirmation is enabled).");
       }
     } catch (err: any) {
-      notice.error("Sign-in failed", err?.message || "Authentication failed. Check your email and password.");
+      notice.error(
+        mode === "signin" ? "Sign-in failed" : "Sign-up failed",
+        err?.message || "Authentication failed. Check your email and password."
+      );
     } finally {
       setBusy(false);
     }
@@ -80,7 +84,7 @@ export default function Auth() {
           {mode === "signin" ? "Welcome back" : "Create your account"}
         </h1>
         <p className="mt-1 text-sm text-muted">
-          {mode === "signin" ? "Sign in to mine clips and manage credits." : "Start with 2 free credits."}
+          {mode === "signin" ? "Sign in to mine clips and manage credits." : "Start with 1 free credit."}
         </p>
 
         <button
@@ -135,16 +139,27 @@ export default function Auth() {
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
           />
-          <input
-            className="field"
-            type="password"
-            required
-            minLength={6}
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete={mode === "signin" ? "current-password" : "new-password"}
-          />
+          <div className="relative">
+            <input
+              className="field pr-12"
+              type={showPassword ? "text" : "password"}
+              required
+              minLength={6}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
+              className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-xl text-dim transition-colors hover:text-bone focus-visible:text-bone focus-visible:outline-none"
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
           {info && <p className="text-sm text-lime">{info}</p>}
           <button type="submit" disabled={busy} className="btn-primary flex w-full items-center justify-center gap-2 py-2.5">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}

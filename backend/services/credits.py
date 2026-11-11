@@ -31,6 +31,53 @@ async def get_profile(user_id: str) -> dict[str, Any] | None:
     )
 
 
+async def ensure_profile(
+    user_id: str,
+    *,
+    email: str | None = None,
+    display_name: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Return the user's profile, creating it (free plan + signup bonus) if the
+    database trigger didn't. Safe to call repeatedly / concurrently.
+    """
+    profile = await get_profile(user_id)
+    if profile:
+        return profile
+
+    from backend.services.pricing import SIGNUP_BONUS_CLARITY, SIGNUP_BONUS_CREDITS
+
+    try:
+        await sb.rest_insert(
+            "profiles",
+            {
+                "id": user_id,
+                "email": email,
+                "display_name": display_name or (email.split("@")[0] if email else None),
+                "plan_id": "free",
+                "credits_balance": SIGNUP_BONUS_CREDITS,
+                "credits_monthly_allowance": 0,
+                "clarity_credits_balance": SIGNUP_BONUS_CLARITY,
+                "clarity_monthly_allowance": 0,
+            },
+        )
+        await sb.rest_insert(
+            "credit_ledger",
+            {
+                "user_id": user_id,
+                "delta": SIGNUP_BONUS_CREDITS,
+                "reason": "signup_bonus",
+                "metadata": {"credits": SIGNUP_BONUS_CREDITS, "created_by": "backend"},
+            },
+        )
+        logger.info(f"Created missing profile for user {user_id}")
+    except Exception:
+        # Most likely a concurrent insert (trigger or another request won the race).
+        logger.exception(f"ensure_profile insert failed for {user_id}")
+
+    return await get_profile(user_id)
+
+
 async def get_balance(user_id: str) -> int:
     profile = await get_profile(user_id)
     if not profile:

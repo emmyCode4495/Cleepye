@@ -31,7 +31,7 @@ from backend.services.payments import (
     flutterwave_hash_ok,
 )
 from backend.services.credits import activate_subscription
-from backend.services.credits import get_profile, InsufficientCredits, PlanLimitExceeded
+from backend.services.credits import ensure_profile, get_profile, InsufficientCredits, PlanLimitExceeded
 from backend.services.supabase_client import supabase_enabled
 
 logging.basicConfig(
@@ -253,7 +253,12 @@ async def api_me(user: AuthUser = Depends(require_user)):
             "auth_required": get_settings().auth_required,
             "supabase": False,
         }
-    profile = await get_profile(user.id)
+    meta = (user.raw or {}).get("user_metadata") or {}
+    profile = await ensure_profile(
+        user.id,
+        email=user.email,
+        display_name=meta.get("full_name") or meta.get("name"),
+    )
     from backend.services.pricing import get_plan, max_clips_for_plan
     plan_id = (profile or {}).get("plan_id") or "free"
     plan = get_plan(plan_id)

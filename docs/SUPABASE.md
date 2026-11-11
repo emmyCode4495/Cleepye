@@ -28,8 +28,15 @@ VITE_SUPABASE_ANON_KEY=eyJ...
 ```
 
 ## Credit model
-- **1 credit = 1 minute** of source video (rounded up)
-- Free plan: 30 credits/mo on signup
-- Starter $19 · 200 cr · Pro $49 · 600 cr · Business $99 · 1,500 cr
+Source of truth is `backend/services/pricing.py`.
+- **Mining credit** = 1 mining job (one source video). **Clarity credits** are a separate meter for enhance/upscale/HDR.
+- New users start on the `free` plan with **1 mining credit and 0 Clarity credits**.
+- Paid plans (Starter / Creator / Pro) are priced in NGN; checkout is covered in `PAYMENTS_NG.md`.
 
-Paid checkout (Stripe) is the next integration step; plan rows live in `public.plans`.
+## Troubleshooting
+**"Database error saving new user" on sign-up** — Supabase Auth runs the `on_auth_user_created`
+trigger (`public.handle_new_user`) inside the sign-up transaction, so any error in it blocks the
+account. Re-run `supabase/schema.sql` (it is idempotent) to add missing columns and install the
+defensive version of the trigger. If you still see it, open **Logs → Postgres Logs** in the
+Supabase dashboard and look for the error right after the sign-up attempt, or a
+`handle_new_user failed for user …` warning, which names the real cause.
